@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useStore, TAB_DEFS, startPolling, stopPolling, isEdict, isArchived } from './store';
 import EdictBoard from './components/EdictBoard';
 import MonitorPanel from './components/MonitorPanel';
@@ -10,10 +10,57 @@ import MemorialPanel from './components/MemorialPanel';
 import TemplatePanel from './components/TemplatePanel';
 import MorningPanel from './components/MorningPanel';
 import TaskModal from './components/TaskModal';
-// ConfirmDialog is used inside TaskModal as needed
 import Toaster from './components/Toaster';
 import CourtCeremony from './components/CourtCeremony';
 import CourtDiscussion from './components/CourtDiscussion';
+
+function AuthGate() {
+  const login = useStore((s) => s.login);
+  const authError = useStore((s) => s.authError);
+  const [password, setPassword] = useState('');
+  const [pending, setPending] = useState(false);
+
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!password.trim() || pending) return;
+    setPending(true);
+    const ok = await login(password);
+    if (!ok) setPending(false);
+  };
+
+  return (
+    <div className="auth-wrap">
+      <form className="auth-card" onSubmit={handleSubmit}>
+        <div className="auth-title">三省六部 · 登录验证</div>
+        <div className="auth-sub">看板已开启密码保护。登录后即可看到最新旨意与流转。</div>
+        <input
+          className="auth-input"
+          type="password"
+          placeholder="请输入看板密码"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          autoFocus
+        />
+        {authError ? <div className="auth-error">{authError}</div> : null}
+        <button className="auth-btn" type="submit" disabled={pending || !password.trim()}>
+          {pending ? '登录中…' : '进入看板'}
+        </button>
+      </form>
+      <Toaster />
+    </div>
+  );
+}
+
+function BootScreen() {
+  return (
+    <div className="auth-wrap">
+      <div className="auth-card auth-boot">
+        <div className="auth-title">三省六部 · 连接中</div>
+        <div className="auth-sub">正在检查看板认证与实时数据。</div>
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   const activeTab = useStore((s) => s.activeTab);
@@ -21,20 +68,28 @@ export default function App() {
   const liveStatus = useStore((s) => s.liveStatus);
   const countdown = useStore((s) => s.countdown);
   const loadAll = useStore((s) => s.loadAll);
+  const authEnabled = useStore((s) => s.authEnabled);
+  const isAuthenticated = useStore((s) => s.isAuthenticated);
 
   useEffect(() => {
     startPolling();
     return () => stopPolling();
   }, []);
 
-  // Compute header chips
+  if (authEnabled === null) {
+    return <BootScreen />;
+  }
+
+  if (authEnabled && !isAuthenticated) {
+    return <AuthGate />;
+  }
+
   const tasks = liveStatus?.tasks || [];
   const edicts = tasks.filter(isEdict);
   const activeEdicts = edicts.filter((t) => !isArchived(t));
   const sync = liveStatus?.syncStatus;
   const syncOk = sync?.ok;
 
-  // Tab badge counts
   const tabBadge = (key: string): string => {
     if (key === 'edicts') return String(activeEdicts.length);
     if (key === 'sessions') return String(tasks.filter((t) => !isEdict(t)).length);
@@ -48,7 +103,6 @@ export default function App() {
 
   return (
     <div className="wrap">
-      {/* ── Header ── */}
       <div className="hdr">
         <div>
           <div className="logo">三省六部 · 总控台</div>
@@ -66,7 +120,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* ── Tabs ── */}
       <div className="tabs">
         {TAB_DEFS.map((t) => (
           <div
@@ -80,7 +133,6 @@ export default function App() {
         ))}
       </div>
 
-      {/* ── Panels ── */}
       {activeTab === 'edicts' && <EdictBoard />}
       {activeTab === 'court' && <CourtDiscussion />}
       {activeTab === 'monitor' && <MonitorPanel />}
@@ -92,7 +144,6 @@ export default function App() {
       {activeTab === 'templates' && <TemplatePanel />}
       {activeTab === 'morning' && <MorningPanel />}
 
-      {/* ── Overlays ── */}
       <TaskModal />
       <Toaster />
       <CourtCeremony />

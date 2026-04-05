@@ -6,6 +6,7 @@
 import { create } from 'zustand';
 import {
   api,
+  ApiError,
   type Task,
   type LiveStatus,
   type AgentConfig,
@@ -259,6 +260,11 @@ interface AppStore {
   morningBrief: MorningBrief | null;
   subConfig: SubConfig | null;
 
+  // Auth
+  authEnabled: boolean | null;
+  isAuthenticated: boolean;
+  authError: string;
+
   // UI State
   activeTab: TabKey;
   edictFilter: 'active' | 'archived' | 'all';
@@ -279,7 +285,12 @@ interface AppStore {
   setSelectedOfficial: (id: string | null) => void;
   setModalTaskId: (id: string | null) => void;
   setCountdown: (n: number) => void;
+  setAuthError: (msg: string) => void;
   toast: (msg: string, type?: 'ok' | 'err') => void;
+
+  // Auth
+  bootstrap: () => Promise<void>;
+  login: (password: string) => Promise<boolean>;
 
   // Data fetching
   loadLive: () => Promise<void>;
@@ -301,6 +312,10 @@ export const useStore = create<AppStore>((set, get) => ({
   agentsStatusData: null,
   morningBrief: null,
   subConfig: null,
+
+  authEnabled: null,
+  isAuthenticated: false,
+  authError: '',
 
   activeTab: 'edicts',
   edictFilter: 'active',
@@ -326,6 +341,7 @@ export const useStore = create<AppStore>((set, get) => ({
   setSelectedOfficial: (id) => set({ selectedOfficial: id }),
   setModalTaskId: (id) => set({ modalTaskId: id }),
   setCountdown: (n) => set({ countdown: n }),
+  setAuthError: (msg) => set({ authError: msg }),
 
   toast: (msg, type = 'ok') => {
     const id = ++_toastId;
@@ -335,17 +351,61 @@ export const useStore = create<AppStore>((set, get) => ({
     }, 3000);
   },
 
+  bootstrap: async () => {
+    try {
+      const auth = await api.authStatus();
+      if (!auth.enabled) {
+        set({ authEnabled: false, isAuthenticated: true, authError: '' });
+        await get().loadAll();
+        return;
+      }
+
+      set({ authEnabled: true });
+      try {
+        const data = await api.liveStatus();
+        set({ liveStatus: data, isAuthenticated: true, authError: '' });
+        const s = get();
+        if (!s.officialsData) {
+          api.officialsStats().then((d) => set({ officialsData: d })).catch(() => {});
+        }
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) {
+          set({ isAuthenticated: false, authError: '', liveStatus: null });
+          return;
+        }
+        throw err;
+      }
+    } catch {
+      set({ authEnabled: false, isAuthenticated: true, authError: '' });
+      await get().loadAll();
+    }
+  },
+
+  login: async (password) => {
+    try {
+      await api.authLogin(password);
+      set({ isAuthenticated: true, authError: '', countdown: 5 });
+      await get().loadAll();
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '登录失败';
+      set({ isAuthenticated: false, authError: message || '登录失败', liveStatus: null });
+      return false;
+    }
+  },
+
   loadLive: async () => {
     try {
       const data = await api.liveStatus();
-      set({ liveStatus: data });
-      // Also preload officials for monitor tab
+      set({ liveStatus: data, isAuthenticated: true, authError: '' });
       const s = get();
       if (!s.officialsData) {
         api.officialsStats().then((d) => set({ officialsData: d })).catch(() => {});
       }
-    } catch {
-      // silently fail
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        set({ authEnabled: true, isAuthenticated: false, authError: '', liveStatus: null });
+      }
     }
   },
 
@@ -409,9 +469,13 @@ let _cdTimer: ReturnType<typeof setInterval> | null = null;
 
 export function startPolling() {
   if (_cdTimer) return;
-  useStore.getState().loadAll();
+  useStore.getState().bootstrap();
   _cdTimer = setInterval(() => {
     const s = useStore.getState();
+    if (s.authEnabled && !s.isAuthenticated) {
+      s.setCountdown(0);
+      return;
+    }
     const cd = s.countdown - 1;
     if (cd <= 0) {
       s.setCountdown(5);

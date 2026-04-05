@@ -5,11 +5,39 @@
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
+export class ApiError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
+async function parseApiError(res: Response): Promise<ApiError> {
+  let message = String(res.status);
+  try {
+    const text = await res.text();
+    if (text) {
+      try {
+        const data = JSON.parse(text) as { error?: string; message?: string };
+        message = data.error || data.message || text;
+      } catch {
+        message = text;
+      }
+    }
+  } catch {
+    // ignore response body parsing failures
+  }
+  return new ApiError(res.status, message);
+}
+
 // ── 通用请求 ──
 
 async function fetchJ<T>(url: string): Promise<T> {
-  const res = await fetch(url, { cache: 'no-store' });
-  if (!res.ok) throw new Error(String(res.status));
+  const res = await fetch(url, { cache: 'no-store', credentials: 'same-origin' });
+  if (!res.ok) throw await parseApiError(res);
   return res.json();
 }
 
@@ -18,13 +46,20 @@ async function postJ<T>(url: string, data: unknown): Promise<T> {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
+    credentials: 'same-origin',
   });
+  if (!res.ok) throw await parseApiError(res);
   return res.json();
 }
 
 // ── API 接口 ──
 
 export const api = {
+  // 认证
+  authStatus: () => fetchJ<AuthStatus>(`${API_BASE}/api/auth/status`),
+  authLogin: (password: string) =>
+    postJ<ActionResult & { token?: string }>(`${API_BASE}/api/auth/login`, { password }),
+
   // 核心数据
   liveStatus: () => fetchJ<LiveStatus>(`${API_BASE}/api/live-status`),
   agentConfig: () => fetchJ<AgentConfig>(`${API_BASE}/api/agent-config`),
@@ -84,7 +119,8 @@ export const api = {
   // 远程 Skills 管理
   addRemoteSkill: (agentId: string, skillName: string, sourceUrl: string, description?: string) =>
     postJ<ActionResult & { skillName?: string; agentId?: string; source?: string; localPath?: string; size?: number; addedAt?: string }>(
-      `${API_BASE}/api/add-remote-skill`, { agentId, skillName, sourceUrl, description: description || '' }
+      `${API_BASE}/api/add-remote-skill`,
+      { agentId, skillName, sourceUrl, description: description || '' }
     ),
   remoteSkillsList: () =>
     fetchJ<RemoteSkillsListResult>(`${API_BASE}/api/remote-skills-list`),
@@ -115,6 +151,11 @@ export interface ActionResult {
   ok: boolean;
   message?: string;
   error?: string;
+}
+
+export interface AuthStatus {
+  enabled: boolean;
+  configured: boolean;
 }
 
 export interface FlowEntry {
