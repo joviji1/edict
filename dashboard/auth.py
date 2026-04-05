@@ -10,6 +10,7 @@
   后续通过 /api/auth/login 获取 token
   API 请求通过 Cookie 或 Authorization header 携带 token
 """
+from __future__ import annotations
 
 import base64
 import hashlib

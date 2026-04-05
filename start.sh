@@ -20,13 +20,25 @@ mkdir -p "$REPO_DIR/data"
 
 # 初始化必需的数据文件（如果不存在）
 for f in live_status.json agent_config.json model_change_log.json sync_status.json; do
-  [ ! -f "$REPO_DIR/data/$f" ] && echo '{}' > "$REPO_DIR/data/$f"
+  if [[ ! -f "$REPO_DIR/data/$f" ]]; then
+    echo '{}' > "$REPO_DIR/data/$f"
+  fi
 done
-[ ! -f "$REPO_DIR/data/pending_model_changes.json" ] && echo '[]' > "$REPO_DIR/data/pending_model_changes.json"
-[ ! -f "$REPO_DIR/data/tasks_source.json" ] && echo '[]' > "$REPO_DIR/data/tasks_source.json"
-[ ! -f "$REPO_DIR/data/tasks.json" ] && echo '[]' > "$REPO_DIR/data/tasks.json"
-[ ! -f "$REPO_DIR/data/officials.json" ] && echo '[]' > "$REPO_DIR/data/officials.json"
-[ ! -f "$REPO_DIR/data/officials_stats.json" ] && echo '{}' > "$REPO_DIR/data/officials_stats.json"
+if [[ ! -f "$REPO_DIR/data/pending_model_changes.json" ]]; then
+  echo '[]' > "$REPO_DIR/data/pending_model_changes.json"
+fi
+if [[ ! -f "$REPO_DIR/data/tasks_source.json" ]]; then
+  echo '[]' > "$REPO_DIR/data/tasks_source.json"
+fi
+if [[ ! -f "$REPO_DIR/data/tasks.json" ]]; then
+  echo '[]' > "$REPO_DIR/data/tasks.json"
+fi
+if [[ ! -f "$REPO_DIR/data/officials.json" ]]; then
+  echo '[]' > "$REPO_DIR/data/officials.json"
+fi
+if [[ ! -f "$REPO_DIR/data/officials_stats.json" ]]; then
+  echo '{}' > "$REPO_DIR/data/officials_stats.json"
+fi
 
 cleanup() {
   echo ""
