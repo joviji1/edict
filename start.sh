@@ -7,6 +7,25 @@
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_DIR"
 
+_default_dashboard_host() {
+  if [[ -n "${EDICT_DASHBOARD_HOST:-}" ]]; then
+    printf '%s\n' "$EDICT_DASHBOARD_HOST"
+    return
+  fi
+  if command -v tailscale &>/dev/null; then
+    local ts_ip
+    ts_ip=$(tailscale ip -4 2>/dev/null | awk 'NR==1 { print; exit }')
+    if [[ -n "$ts_ip" ]]; then
+      printf '%s\n' "$ts_ip"
+      return
+    fi
+  fi
+  printf '127.0.0.1\n'
+}
+
+DASHBOARD_HOST="$(_default_dashboard_host)"
+DASHBOARD_PORT="${EDICT_DASHBOARD_PORT:-7891}"
+
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 
 # 检查 Python
@@ -69,21 +88,21 @@ fi
 
 # 启动看板服务器
 echo -e "${GREEN}▶ 启动看板服务器...${NC}"
-python3 dashboard/server.py &
+python3 dashboard/server.py --host "$DASHBOARD_HOST" --port "$DASHBOARD_PORT" &
 SERVER_PID=$!
 
 sleep 1
 echo ""
 echo -e "${GREEN}✅ 服务已启动！${NC}"
-echo -e "   看板地址: ${BLUE}http://127.0.0.1:7891${NC}"
+echo -e "   看板地址: ${BLUE}http://${DASHBOARD_HOST}:${DASHBOARD_PORT}${NC}"
 echo -e "   按 ${YELLOW}Ctrl+C${NC} 关闭所有服务"
 echo ""
 
 # 尝试自动打开浏览器
 if command -v open &>/dev/null; then
-  open http://127.0.0.1:7891
+  open "http://${DASHBOARD_HOST}:${DASHBOARD_PORT}"
 elif command -v xdg-open &>/dev/null; then
-  xdg-open http://127.0.0.1:7891
+  xdg-open "http://${DASHBOARD_HOST}:${DASHBOARD_PORT}"
 fi
 
 # 等待任一进程退出

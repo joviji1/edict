@@ -15,8 +15,24 @@ LOOP_PIDFILE="$PIDDIR/loop.pid"
 SERVER_LOG="$LOGDIR/server.log"
 LOOP_LOG="$LOGDIR/loop.log"
 
+_default_dashboard_host() {
+  if [[ -n "${EDICT_DASHBOARD_HOST:-}" ]]; then
+    printf '%s\n' "$EDICT_DASHBOARD_HOST"
+    return
+  fi
+  if command -v tailscale &>/dev/null; then
+    local ts_ip
+    ts_ip=$(tailscale ip -4 2>/dev/null | awk 'NR==1 { print; exit }')
+    if [[ -n "$ts_ip" ]]; then
+      printf '%s\n' "$ts_ip"
+      return
+    fi
+  fi
+  printf '127.0.0.1\n'
+}
+
 # 可通过环境变量覆盖的配置
-DASHBOARD_HOST="${EDICT_DASHBOARD_HOST:-127.0.0.1}"
+DASHBOARD_HOST="$(_default_dashboard_host)"
 DASHBOARD_PORT="${EDICT_DASHBOARD_PORT:-7891}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
@@ -240,7 +256,7 @@ case "${1:-}" in
     echo "  logs     查看日志 (logs [server|loop|all])"
     echo ""
     echo "环境变量:"
-    echo "  EDICT_DASHBOARD_HOST  监听地址 (默认: 127.0.0.1)"
+    echo "  EDICT_DASHBOARD_HOST  监听地址 (默认: Tailscale IPv4，否则 127.0.0.1)"
     echo "  EDICT_DASHBOARD_PORT  监听端口 (默认: 7891)"
     exit 1
     ;;
