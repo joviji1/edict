@@ -15,25 +15,9 @@ LOOP_PIDFILE="$PIDDIR/loop.pid"
 SERVER_LOG="$LOGDIR/server.log"
 LOOP_LOG="$LOGDIR/loop.log"
 
-_default_dashboard_host() {
-  if [[ -n "${EDICT_DASHBOARD_HOST:-}" ]]; then
-    printf '%s\n' "$EDICT_DASHBOARD_HOST"
-    return
-  fi
-  if command -v tailscale &>/dev/null; then
-    local ts_ip
-    ts_ip=$(tailscale ip -4 2>/dev/null | awk 'NR==1 { print; exit }')
-    if [[ -n "$ts_ip" ]]; then
-      printf '%s\n' "$ts_ip"
-      return
-    fi
-  fi
-  printf '127.0.0.1\n'
-}
-
 # 可通过环境变量覆盖的配置
-DASHBOARD_HOST="$(_default_dashboard_host)"
-DASHBOARD_PORT="${EDICT_DASHBOARD_PORT:-7891}"
+DASHBOARD_HOST="${EDICT_DASHBOARD_HOST:-127.0.0.1}"
+DASHBOARD_PORT="${EDICT_DASHBOARD_PORT:-7892}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 
@@ -72,7 +56,6 @@ _is_running() {
     if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
       return 0
     fi
-    # PID 文件存在但进程已死，清理
     rm -f "$pidfile"
   fi
   return 1
@@ -100,7 +83,6 @@ do_start() {
   echo -e "${BLUE}╚══════════════════════════════════════════╝${NC}"
   echo ""
 
-  # 检查是否已在运行
   local already=0
   if _is_running "$SERVER_PIDFILE"; then
     echo -e "${YELLOW}⚠️  看板服务器已在运行 (PID=$(_get_pid "$SERVER_PIDFILE"))${NC}"
@@ -115,7 +97,6 @@ do_start() {
     return 0
   fi
 
-  # 启动数据刷新循环（后台）
   if ! _is_running "$LOOP_PIDFILE"; then
     if command -v openclaw &>/dev/null; then
       echo -e "${GREEN}▶ 启动数据刷新循环...${NC}"
@@ -128,7 +109,6 @@ do_start() {
     fi
   fi
 
-  # 启动看板服务器（后台）
   if ! _is_running "$SERVER_PIDFILE"; then
     echo -e "${GREEN}▶ 启动看板服务器...${NC}"
     nohup python3 "$REPO_DIR/dashboard/server.py" \
@@ -142,7 +122,7 @@ do_start() {
   echo ""
   if _is_running "$SERVER_PIDFILE"; then
     echo -e "${GREEN}✅ 服务已启动！${NC}"
-    echo -e "   看板地址: ${BLUE}http://${DASHBOARD_HOST}:${DASHBOARD_PORT}${NC}"
+    echo -e "   内部地址: ${BLUE}http://${DASHBOARD_HOST}:${DASHBOARD_PORT}${NC}"
   else
     echo -e "${RED}❌ 看板服务器启动失败，请查看日志: $SERVER_LOG${NC}"
     exit 1
@@ -162,12 +142,10 @@ do_stop() {
       local pid
       pid=$(_get_pid "$pidfile")
       kill "$pid" 2>/dev/null
-      # 等待最多 5 秒
       for _ in $(seq 1 10); do
         kill -0 "$pid" 2>/dev/null || break
         sleep 0.5
       done
-      # 如果还在运行，强制 kill
       if kill -0 "$pid" 2>/dev/null; then
         kill -9 "$pid" 2>/dev/null
       fi
@@ -203,11 +181,10 @@ do_status() {
   done
 
   echo ""
-  # 如果看板在运行，尝试 healthz
   if _is_running "$SERVER_PIDFILE"; then
     local health
     if health=$(python3 -c "
-import urllib.request, json, sys
+import urllib.request, json
 try:
     r = urllib.request.urlopen('http://${DASHBOARD_HOST}:${DASHBOARD_PORT}/healthz', timeout=3)
     d = json.loads(r.read())
@@ -221,7 +198,7 @@ except Exception:
         *)          echo -e "  健康检查: ${RED}❌ 无法连接${NC}" ;;
       esac
     fi
-    echo -e "  看板地址: ${BLUE}http://${DASHBOARD_HOST}:${DASHBOARD_PORT}${NC}"
+    echo -e "  内部地址: ${BLUE}http://${DASHBOARD_HOST}:${DASHBOARD_PORT}${NC}"
   fi
 }
 
@@ -236,8 +213,6 @@ do_logs() {
     *)       echo "用法: $0 logs [server|loop|all]"; exit 1 ;;
   esac
 }
-
-# ── 主入口 ──
 
 case "${1:-}" in
   start)   do_start ;;
@@ -256,8 +231,8 @@ case "${1:-}" in
     echo "  logs     查看日志 (logs [server|loop|all])"
     echo ""
     echo "环境变量:"
-    echo "  EDICT_DASHBOARD_HOST  监听地址 (默认: Tailscale IPv4，否则 127.0.0.1)"
-    echo "  EDICT_DASHBOARD_PORT  监听端口 (默认: 7891)"
+    echo "  EDICT_DASHBOARD_HOST  监听地址 (默认: 127.0.0.1)"
+    echo "  EDICT_DASHBOARD_PORT  监听端口 (默认: 7892)"
     exit 1
     ;;
 esac

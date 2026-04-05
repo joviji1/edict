@@ -7,37 +7,18 @@
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_DIR"
 
-_default_dashboard_host() {
-  if [[ -n "${EDICT_DASHBOARD_HOST:-}" ]]; then
-    printf '%s\n' "$EDICT_DASHBOARD_HOST"
-    return
-  fi
-  if command -v tailscale &>/dev/null; then
-    local ts_ip
-    ts_ip=$(tailscale ip -4 2>/dev/null | awk 'NR==1 { print; exit }')
-    if [[ -n "$ts_ip" ]]; then
-      printf '%s\n' "$ts_ip"
-      return
-    fi
-  fi
-  printf '127.0.0.1\n'
-}
-
-DASHBOARD_HOST="$(_default_dashboard_host)"
-DASHBOARD_PORT="${EDICT_DASHBOARD_PORT:-7891}"
+DASHBOARD_HOST="${EDICT_DASHBOARD_HOST:-127.0.0.1}"
+DASHBOARD_PORT="${EDICT_DASHBOARD_PORT:-7892}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 
-# 检查 Python
 if ! command -v python3 &>/dev/null; then
   echo -e "${RED}❌ 未找到 python3，请先安装 Python 3.9+${NC}"
   exit 1
 fi
 
-# 确保 data 目录存在
 mkdir -p "$REPO_DIR/data"
 
-# 初始化必需的数据文件（如果不存在）
 for f in live_status.json agent_config.json model_change_log.json sync_status.json; do
   if [[ ! -f "$REPO_DIR/data/$f" ]]; then
     echo '{}' > "$REPO_DIR/data/$f"
@@ -75,7 +56,6 @@ echo -e "${BLUE}║  🏛️  三省六部 · 服务启动中               ║$
 echo -e "${BLUE}╚══════════════════════════════════════════╝${NC}"
 echo ""
 
-# 启动数据刷新循环（后台）
 if command -v openclaw &>/dev/null; then
   echo -e "${GREEN}▶ 启动数据刷新循环...${NC}"
   bash scripts/run_loop.sh &
@@ -86,7 +66,6 @@ else
   LOOP_PID=""
 fi
 
-# 启动看板服务器
 echo -e "${GREEN}▶ 启动看板服务器...${NC}"
 python3 dashboard/server.py --host "$DASHBOARD_HOST" --port "$DASHBOARD_PORT" &
 SERVER_PID=$!
@@ -94,16 +73,14 @@ SERVER_PID=$!
 sleep 1
 echo ""
 echo -e "${GREEN}✅ 服务已启动！${NC}"
-echo -e "   看板地址: ${BLUE}http://${DASHBOARD_HOST}:${DASHBOARD_PORT}${NC}"
+echo -e "   内部地址: ${BLUE}http://${DASHBOARD_HOST}:${DASHBOARD_PORT}${NC}"
 echo -e "   按 ${YELLOW}Ctrl+C${NC} 关闭所有服务"
 echo ""
 
-# 尝试自动打开浏览器
 if command -v open &>/dev/null; then
   open "http://${DASHBOARD_HOST}:${DASHBOARD_PORT}"
 elif command -v xdg-open &>/dev/null; then
   xdg-open "http://${DASHBOARD_HOST}:${DASHBOARD_PORT}"
 fi
 
-# 等待任一进程退出
 wait $SERVER_PID $LOOP_PID 2>/dev/null
