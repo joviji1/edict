@@ -16,8 +16,8 @@ python3 scripts/kanban_update.py flow JJC-xxx "尚书省" "六部" "派发：[�
 
 | 部门 | agent_id | 职责 |
 |------|----------|------|
-| 工部 | gongbu | 开发/架构/代码 |
-| 兵部 | bingbu | 基础设施/部署/安全 |
+| 工部 | gongbu | 基础设施/部署/CI/CD |
+| 兵部 | bingbu | 开发/架构/代码/安全巡检 |
 | 户部 | hubu | 数据分析/报表/成本 |
 | 礼部 | libu | 文档/UI/对外沟通 |
 | 刑部 | xingbu | 审查/测试/合规 |
