@@ -35,3 +35,7 @@ edict/frontend/node_modules/
 # Backups
 *.bak*
 data
+
+# Local caches and IDE
+.vite/
+.vscode/
