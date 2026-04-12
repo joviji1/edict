@@ -76,6 +76,7 @@ while true; do
   safe_run "$SCRIPT_DIR/apply_model_changes.py"
   safe_run "$SCRIPT_DIR/sync_officials_stats.py"
   safe_run "$SCRIPT_DIR/refresh_live_data.py"
+  safe_run "$SCRIPT_DIR/baota_webserver_patrol.py"
 
   # 定期巡检：检测卡住的任务并自动重试
   SCAN_COUNTER=$((SCAN_COUNTER + INTERVAL))
