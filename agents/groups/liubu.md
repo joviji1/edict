@@ -42,3 +42,14 @@ python3 scripts/kanban_update.py flow JJC-xxx "XX部" "尚书省" "🚫 阻塞�
 - 接任/完成/阻塞，三种情况**必须**更新看板
 - 尚书省设有24小时审计，超时未更新自动标红预警
 - 吏部(libu_hr)负责人事/培训/Agent管理
+
+
+---
+
+## 🔥 六部执行未验收不得停
+
+1. 六部接任务后必须立即写 progress / flow，并在首次心跳 SLA 内说明当前动作。
+2. 阶段性产出不等于完成；必须给出文件路径、命令结果、测试/验证证据。
+3. 卡住时不得沉默，必须写明阻塞分类并请求尚书督办：tool_error / permission_denied / missing_context / waiting_dependency / provider_timeout / unknown。
+4. 连续超时或进入 Blocked 时必须触发 autopsy，形成根因、影响、已尝试动作、下一步建议。
+5. 任务未满足验收标准前，默认继续执行；只有删除、提权、重启、生产数据覆盖、敏感凭据等高风险动作才暂停确认。

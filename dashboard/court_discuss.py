@@ -84,6 +84,12 @@ OFFICIAL_PROFILES = {
         'personality': '知人善任，擅长人员安排和组织协调。八面玲珑但有原则。',
         'speaking_style': '关注人的因素，"此事需考虑各部人手"、"建议由某某负责"。'
     },
+    'zaochao': {
+        'name': '钦天监', 'emoji': '📰', 'role': '正三品·朝报官',
+        'duty': '朝报采编与外部情报汇总。负责汇总天下要闻、监测舆情风向、提炼外部变化并提前示警，为朝堂议政补充时效性背景。',
+        'personality': '耳目灵通，敏锐谨慎，善于从纷杂信息中抓住关键风向。',
+        'speaking_style': '常以"据臣今晨所察"、"坊间风闻如此"开头，重事实脉络与时效。'
+    },
 }
 
 # ── 命运骰子事件（古风版）──
@@ -225,8 +231,8 @@ def conclude_session(session_id: str) -> dict:
 
     session['phase'] = 'concluded'
 
-    # 尝试用 LLM 生成总结
-    summary = _llm_summarize(session)
+    structured = _llm_structured_conclusion(session)
+    summary = (structured or {}).get('summary') or _llm_summarize(session)
     if not summary:
         # 降级到简单统计
         official_msgs = [m for m in session['messages'] if m['type'] == 'official']
@@ -236,6 +242,7 @@ def conclude_session(session_id: str) -> dict:
             by_name[name] = by_name.get(name, 0) + 1
         parts = [f"{n}发言{c}次" for n, c in by_name.items()]
         summary = f"历经{session['round']}轮讨论，{'、'.join(parts)}。议题待后续落实。"
+    conclusion = (structured or {}).get('conclusion') or _fallback_structured_conclusion(session, summary)
 
     session['messages'].append({
         'type': 'system',
@@ -243,11 +250,13 @@ def conclude_session(session_id: str) -> dict:
         'timestamp': time.time(),
     })
     session['summary'] = summary
+    session['conclusion'] = conclusion
 
     return {
         'ok': True,
         'session_id': session_id,
         'summary': summary,
+        'conclusion': conclusion,
     }
 
 
@@ -590,6 +599,117 @@ def _llm_summarize(session: dict) -> str | None:
     return _llm_complete('你是朝堂记录官，负责总结朝议结果。', prompt, max_tokens=300)
 
 
+def _extract_json_object(content: str) -> dict | None:
+    if not content:
+        return None
+    if '```json' in content:
+        content = content.split('```json', 1)[1].split('```', 1)[0].strip()
+    elif '```' in content:
+        content = content.split('```', 1)[1].split('```', 1)[0].strip()
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        start, end = content.find('{'), content.rfind('}')
+        if start >= 0 and end > start:
+            try:
+                return json.loads(content[start:end + 1])
+            except json.JSONDecodeError:
+                return None
+    return None
+
+
+def _normalise_conclusion(data: dict, session: dict) -> dict | None:
+    conclusion = data.get('conclusion') if isinstance(data.get('conclusion'), dict) else data
+    if not isinstance(conclusion, dict):
+        return None
+    actions = []
+    valid_types = {'task', 'todo', 'rule'}
+    for raw in conclusion.get('actions', []) or []:
+        if not isinstance(raw, dict):
+            continue
+        typ = str(raw.get('type', 'todo')).strip().lower()
+        if typ not in valid_types:
+            typ = 'todo'
+        title = str(raw.get('title') or raw.get('content') or '').strip()
+        content = str(raw.get('content') or title).strip()
+        if not title and not content:
+            continue
+        actions.append({
+            'type': typ,
+            'title': title or content[:80],
+            'content': content or title,
+            'owner': str(raw.get('owner') or raw.get('agent') or '').strip(),
+            'priority': str(raw.get('priority') or 'normal').strip(),
+            'reason': str(raw.get('reason') or '由朝堂议政结论生成').strip(),
+            'acceptance': str(raw.get('acceptance') or '').strip(),
+            'scope': str(raw.get('scope') or 'task').strip(),
+        })
+    return {
+        'decision': str(conclusion.get('decision') or data.get('summary') or session.get('topic', '')).strip(),
+        'consensus': [str(x).strip() for x in conclusion.get('consensus', []) if str(x).strip()][:10],
+        'controversies': [str(x).strip() for x in conclusion.get('controversies', []) if str(x).strip()][:10],
+        'actions': actions,
+        'next_steps': [str(x).strip() for x in conclusion.get('next_steps', []) if str(x).strip()][:10],
+    }
+
+
+def _fallback_structured_conclusion(session: dict, summary: str = '') -> dict:
+    officials = [o.get('id', '') for o in session.get('officials', [])]
+    owner = 'shangshu' if 'shangshu' in officials else (officials[0] if officials else '')
+    actions = [{
+        'type': 'todo',
+        'title': f"落实议政结论：{session.get('topic', '')[:50]}",
+        'content': summary or f"围绕「{session.get('topic', '')}」形成后续落实项",
+        'owner': owner,
+        'priority': 'normal',
+        'reason': '朝堂议政自动归档',
+        'acceptance': '结论已转入任务/todo/rule 台账并可追踪',
+        'scope': 'task',
+    }]
+    return {
+        'decision': summary or f"议题「{session.get('topic', '')}」需继续落实。",
+        'consensus': [summary] if summary else [],
+        'controversies': [],
+        'actions': actions,
+        'next_steps': [a['title'] for a in actions],
+    }
+
+
+def _llm_structured_conclusion(session: dict) -> dict | None:
+    official_msgs = [m for m in session['messages'] if m['type'] == 'official']
+    if not official_msgs:
+        return None
+    dialogue = '\n'.join(f"{m.get('official_name', '?')}：{m['content']}" for m in official_msgs[-30:])
+    prompt = f"""请将以下朝堂议政记录整理为可落地台账 JSON。
+议题：{session['topic']}
+绑定任务ID：{session.get('task_id', '')}
+
+对话记录：
+{dialogue}
+
+只输出 JSON，结构如下：
+{{
+  "summary": "2-3句摘要",
+  "conclusion": {{
+    "decision": "最终结论",
+    "consensus": ["共识"],
+    "controversies": ["争议"],
+    "actions": [
+      {{"type": "task|todo|rule", "title": "事项标题", "content": "具体内容", "owner": "gongbu|bingbu|hubu|xingbu|libu|libu_hr|shangshu|menxia|zhongshu|taizi", "priority": "high|normal|low", "reason": "理由", "acceptance": "验收标准", "scope": "task|global"}}
+    ],
+    "next_steps": ["下一步"]
+  }}
+}}"""
+    raw = _llm_complete('你是朝堂书记官，负责把议政结论结构化为 task/todo/rule 台账。', prompt, max_tokens=900)
+    data = _extract_json_object(raw or '')
+    if not data:
+        return None
+    conclusion = _normalise_conclusion(data, session)
+    if not conclusion:
+        return None
+    return {'summary': str(data.get('summary') or conclusion.get('decision') or '').strip(), 'conclusion': conclusion}
+
+
 # ── 规则模拟（无 LLM 时的降级方案）──
 
 _SIMULATED_RESPONSES = {
@@ -691,4 +811,8 @@ def _serialize(session: dict) -> dict:
         'messages': session['messages'],
         'round': session['round'],
         'phase': session['phase'],
+        'summary': session.get('summary', ''),
+        'conclusion': session.get('conclusion'),
+        'adopted': session.get('adopted', {}),
     }
+

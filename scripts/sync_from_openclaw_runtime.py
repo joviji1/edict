@@ -204,6 +204,36 @@ def build_task(agent_id, session_key, row, now_ms):
     }
 
 
+def should_keep_runtime_task(task, now_ms):
+    """Return True if a runtime-mapped task should stay in tasks_source.json."""
+    if str(task.get('id', '')).startswith('JJC'):
+        return True
+
+    updated = task.get('sourceMeta', {}).get('updatedAt', 0)
+    title = task.get('title', '')
+    state = task.get('state')
+    session_key = (task.get('sourceMeta') or {}).get('sessionKey', '')
+    one_day_ago = now_ms - 24 * 3600 * 1000
+
+    # 1. 排除太旧的 (超过24小时)
+    if updated < one_day_ago:
+        return False
+
+    # 2. 排除纯后台 cron / subagent 任务，除非它们正在报错
+    if '定时任务' in title or '子任务' in title:
+        return state == 'Blocked'
+
+    # 3. 排除心跳会话，但保留真实官方 main 会话；普通飞书群/私聊会话仅在报错时展示
+    title_lower = str(title).strip().lower()
+    if title_lower == 'heartbeat':
+        return False
+    if ':feishu:group:' in session_key or ':feishu:direct:' in session_key:
+        return state == 'Blocked'
+
+    # 保留 Doing（<2min）、Review（<60min）、Blocked（报错）
+    return state in ('Doing', 'Review', 'Blocked')
+
+
 def main():
     start = time.time()
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -268,39 +298,8 @@ def main():
         tasks = deduped
 
         # ── 过滤掉非 JJC 且非活跃的系统会话，防止看板噪音 ──
-        # 规则: 仅保留 24小时内更新的活跃会话，且排除 cron/subagent 等纯后台任务
-        filtered_tasks = []
-        one_day_ago = now_ms - 24 * 3600 * 1000
-        for t in tasks:
-            # 始终保留 JJC 任务（如果有的话，虽然这里主要是 OC 任务，但以防万一）
-            if str(t['id']).startswith('JJC'):
-                filtered_tasks.append(t)
-                continue
-            
-            # OC 任务过滤
-            updated = t.get('sourceMeta', {}).get('updatedAt', 0)
-            title = t.get('title', '')
-            
-            # 1. 排除太旧的 (超过24小时)
-            if updated < one_day_ago:
-                continue
-            
-            # 2. 排除纯后台 cron / subagent 任务，除非它们正在报错
-            if '定时任务' in title or '子任务' in title:
-                # 只有当它 block 或者 error 时才显示，否则视为噪音
-                if t.get('state') != 'Blocked':
-                    continue
-
-            # 3. 排除已冷却的 OC 会话，避免污染看板
-            # 保留 Doing（<2min）、Review（<60min）、Blocked（报错）
-            # 仅过滤掉 Next（>60min 无响应）等已结束/闲置的会话
-            state = t.get('state')
-            if state not in ('Doing', 'Review', 'Blocked'):
-                continue
-
-            filtered_tasks.append(t)
-        
-        tasks = filtered_tasks
+        # 保留：24 小时内的真实活跃/异常 runtime 会话；排除：heartbeat、静默 cron/subagent、非报错的普通群聊/私聊映射。
+        tasks = [t for t in tasks if should_keep_runtime_task(t, now_ms)]
         
         # ── 保留已有的 JJC-* 旨意任务（不覆盖皇上下旨记录）──
         # JJC 任务的 now 字段由 Agent 自己通过 kanban_update.py progress 命令主动上报，

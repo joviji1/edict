@@ -1,5 +1,5 @@
 # ⚔️ 三省六部 · Demo Dashboard
-# docker run -p 7891:7891 cft0808/sansheng-demo
+# docker run -p 7891:7891 cft0808/edict
 # Then open: http://localhost:7891
 
 # Stage 1: 构建 React 前端

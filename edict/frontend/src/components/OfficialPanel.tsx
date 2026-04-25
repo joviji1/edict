@@ -3,6 +3,41 @@ import { useStore, STATE_LABEL } from '../store';
 
 const MEDALS = ['🥇', '🥈', '🥉'];
 
+function buildMeritTrendSvg(offs: any[]) {
+  const values = (offs || []).flatMap((o) =>
+    Array.isArray(o.merit_history) ? o.merit_history.map((item: any) => Number(item.score) || 0) : [],
+  );
+  if (!values.length) {
+    return null;
+  }
+  const width = 220;
+  const height = 72;
+  const pad = 8;
+  const min = Math.min(...values, 0);
+  const max = Math.max(...values, 1);
+  const span = Math.max(max - min, 1);
+  const step = values.length > 1 ? (width - pad * 2) / (values.length - 1) : 0;
+  const points = values
+    .map((v, idx) => {
+      const x = pad + step * idx;
+      const y = height - pad - ((v - min) / span) * (height - pad * 2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+  return (
+    <svg className="officials-trend-svg" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+      <polyline
+        points={points}
+        fill="none"
+        stroke="#f5c842"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export default function OfficialPanel() {
   const officialsData = useStore((s) => s.officialsData);
   const selectedOfficial = useStore((s) => s.selectedOfficial);
@@ -24,6 +59,9 @@ export default function OfficialPanel() {
 
   // Active officials
   const alive = offs.filter((o) => o.heartbeat?.status === 'active');
+  const meritTrendSvg = buildMeritTrendSvg(offs);
+  const starPerformer = offs.find((o) => Array.isArray(o.tags) && o.tags.includes('能臣'));
+  const trainingNeed = offs.find((o) => Array.isArray(o.tags) && o.tags.includes('需训练'));
 
   // Selected official detail
   const sel = offs.find((o) => o.id === (selectedOfficial || offs[0]?.id));
@@ -69,8 +107,20 @@ export default function OfficialPanel() {
         {/* Left: Ranklist */}
         <div className="off-ranklist">
           <div className="orl-hdr">功绩排行</div>
+          <div className="officials-summary-card">
+            <div className="officials-summary-head">走势总览</div>
+            <div className="officials-summary-body">
+              {meritTrendSvg || <div className="officials-trend-empty">暂无趋势样本</div>}
+            </div>
+            <div className="officials-summary-meta">近 8 条任务功绩变化折线（按当前官员汇总）</div>
+          </div>
+          <div className="officials-badge-row">
+            <span className="official-tag star">🏅 能臣：{starPerformer?.role || '暂无'}</span>
+            <span className="official-tag training">🛠️ 需训练：{trainingNeed?.role || '暂无'}</span>
+          </div>
           {offs.map((o) => {
             const hb = o.heartbeat || { status: 'idle' };
+            const tags = Array.isArray(o.tags) ? o.tags : [];
             return (
               <div
                 key={o.id}
@@ -84,6 +134,18 @@ export default function OfficialPanel() {
                 <span style={{ flex: 1 }}>
                   <div style={{ fontSize: 12, fontWeight: 700 }}>{o.role}</div>
                   <div style={{ fontSize: 10, color: 'var(--muted)' }}>{o.label}</div>
+                  {tags.length > 0 && (
+                    <div className="official-mini-tags">
+                      {tags.map((tag: string) => (
+                        <span
+                          key={`${o.id}-${tag}`}
+                          className={`official-mini-tag ${tag === '能臣' ? 'star' : 'training'}`}
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </span>
                 <span style={{ fontSize: 11 }}>{o.merit_score}分</span>
                 <span className={`dc-dot ${hb.status}`} style={{ width: 8, height: 8 }} />

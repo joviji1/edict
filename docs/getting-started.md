@@ -69,7 +69,7 @@ open http://127.0.0.1:7891
 
 > 💡 **提示**：`run_loop.sh` 每 15 秒自动同步数据。可用 `&` 后台运行。
 
-> 💡 **看板即开即用**：`server.py` 内嵌 `dashboard/dashboard.html`，无需额外构建。Docker 镜像包含预构建的 React 前端。
+> 💡 **看板即开即用**：`server.py` 直接提供 React 构建产物（`dashboard/dist/`）与 API；`dashboard/dashboard.html` 现主要作为历史源码/兼容文件保留。Docker 镜像包含预构建前端。
 
 ## 第五步：发送第一道旨意
 
@@ -114,7 +114,7 @@ open http://127.0.0.1:7891
 
 ### 管理技能
 
-> 看板 → 🛠️ 技能配置 → 查看已安装技能 → 点击添加新技能
+> 看板 → 🛠️ 技能配置 → 查看已安装技能 → 点击添加新技能 / 添加远程 Skill
 
 ### 叫停 / 取消任务
 
@@ -136,7 +136,7 @@ python3 dashboard/server.py
 
 ### Agent 报错 "No API key found for provider"
 
-这是最常见的问题。三省六部有 11 个 Agent，每个都需要 API Key。
+这是最常见的问题。三省六部当前有 12 个 Agent（其中 11 个业务角色 + 1 个兼容角色），至少业务链路中的角色都需要可用的 API Key。
 
 ```bash
 # 方法一：为任意 Agent 配置后重新运行 install.sh（推荐）
@@ -199,3 +199,4 @@ openclaw gateway restart
 - [🤝 贡献指南](../CONTRIBUTING.md)
 - [💬 OpenClaw 文档](https://docs.openclaw.ai)
 - [📮 公众号 · cft0808](wechat.md) — 架构拆解 / 踩坑复盘 / Token 省钱术
+- [🛠️ 远程 Skills 资源管理指南](remote-skills-guide.md)

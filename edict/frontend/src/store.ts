@@ -84,12 +84,14 @@ export function getPipeStatus(t: Task): PipeStatus[] {
 
 export type TabKey =
   | 'edicts' | 'monitor' | 'officials' | 'models'
-  | 'skills' | 'sessions' | 'memorials' | 'templates' | 'morning' | 'court';
+  | 'skills' | 'sessions' | 'memorials' | 'templates' | 'morning' | 'court' | 'relay' | 'approval';
 
 export const TAB_DEFS: { key: TabKey; label: string; icon: string }[] = [
   { key: 'edicts',    label: '旨意看板', icon: '📜' },
+  { key: 'approval',  label: '待批专面板', icon: '🛡️' },
   { key: 'court',     label: '朝堂议政', icon: '🏛️' },
   { key: 'monitor',   label: '省部调度', icon: '🔌' },
+  { key: 'relay',     label: '急递铺 / 国史馆', icon: '🚀' },
   { key: 'officials', label: '官员总览', icon: '👔' },
   { key: 'models',    label: '模型配置', icon: '🤖' },
   { key: 'skills',    label: '技能配置', icon: '🎯' },
@@ -330,7 +332,7 @@ export const useStore = create<AppStore>((set, get) => ({
   setActiveTab: (tab) => {
     set({ activeTab: tab });
     const s = get();
-    if (['models', 'skills', 'sessions'].includes(tab) && !s.agentConfig) s.loadAgentConfig();
+    if (['models', 'skills', 'sessions'].includes(tab)) s.loadAgentConfig();
     if (tab === 'officials' && !s.officialsData) s.loadOfficials();
     if (tab === 'monitor') s.loadAgentsStatus();
     if (tab === 'morning' && !s.morningBrief) s.loadMorning();

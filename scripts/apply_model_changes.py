@@ -32,6 +32,24 @@ def cleanup_backups():
             pass
 
 
+def _normalize_model_value(model_value):
+    if isinstance(model_value, str):
+        return model_value.strip()
+    if isinstance(model_value, dict):
+        return str(model_value.get('primary') or model_value.get('id') or '').strip()
+    return ''
+
+
+def _agent_effective_model(agent_cfg, default_model, fallback_models):
+    explicit_model = _normalize_model_value(agent_cfg.get('model', ''))
+    if explicit_model:
+        return explicit_model
+    fallback_models = [m for m in fallback_models if m]
+    if len(fallback_models) == 1 and agent_cfg.get('model') is None:
+        return fallback_models[0]
+    return default_model
+
+
 def main():
     if not PENDING.exists():
         return
@@ -40,8 +58,14 @@ def main():
         return
 
     cfg = rj(OPENCLAW_CFG, {})
-    agents_list = cfg.get('agents', {}).get('list', [])
-    default_model = cfg.get('agents', {}).get('defaults', {}).get('model', {}).get('primary', '')
+    agents_cfg = cfg.get('agents', {})
+    agents_list = agents_cfg.get('list', [])
+    defaults_model_cfg = agents_cfg.get('defaults', {}).get('model', {})
+    default_model = _normalize_model_value(defaults_model_cfg)
+    fallback_models = []
+    if isinstance(defaults_model_cfg, dict):
+        fallback_models = [_normalize_model_value(m) for m in defaults_model_cfg.get('fallbacks', [])]
+    fallback_models = [m for m in fallback_models if m and m != default_model]
 
     applied, errors = [], []
     for change in pending:
@@ -53,7 +77,7 @@ def main():
         found = False
         for ag in agents_list:
             if ag.get('id') == ag_id:
-                old = ag.get('model', default_model)
+                old = _agent_effective_model(ag, default_model, fallback_models)
                 if new_model == default_model:
                     ag.pop('model', None)
                 else:
@@ -68,9 +92,13 @@ def main():
         # 只有内容真正变化时才备份和写入
         new_cfg = dict(cfg)
         new_cfg['agents'] = dict(cfg.get('agents', {}))
-        new_cfg['agents']['list'] = agents_list
+        new_cfg['agents']['list'] = [dict(agent) for agent in agents_list]
         old_text = json.dumps(cfg, ensure_ascii=False, sort_keys=True)
         new_text = json.dumps(new_cfg, ensure_ascii=False, sort_keys=True)
+        if old_text == new_text and applied:
+            for item in applied:
+                item['writeSkipped'] = True
+        bak = None
         if old_text != new_text:
             bak = OPENCLAW_CFG.parent / f'openclaw.json.bak.model-{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}'
             shutil.copy2(OPENCLAW_CFG, bak)
@@ -98,7 +126,7 @@ def main():
         except Exception as e:
             log.error(f'gateway restart failed: {e}')
             # 回滚配置
-            if bak.exists():
+            if bak and bak.exists():
                 shutil.copy2(bak, OPENCLAW_CFG)
                 log.warning('rolled back openclaw.json from backup')
                 rollback = True

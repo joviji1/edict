@@ -133,21 +133,91 @@ def calc_cost(s, model):
     return round(usd, 4)
 
 def get_task_stats(org_label, tasks):
-    done   = [t for t in tasks if t.get('state')=='Done' and t.get('org')==org_label]
-    active = [t for t in tasks if t.get('state') in ('Doing','Review','Assigned') and t.get('org')==org_label]
-    fl = sum(1 for t in tasks for f in t.get('flow_log',[])
-             if f.get('from')==org_label or f.get('to')==org_label)
-    # 参与的旨意（JJC）列表
+    owned = [t for t in tasks if t.get('org') == org_label]
+    done = [t for t in owned if t.get('state') == 'Done']
+    blocked = [t for t in owned if t.get('state') == 'Blocked']
+    active = [t for t in owned if t.get('state') in ('Doing', 'Review', 'Assigned')]
+    fl = sum(1 for t in tasks for f in t.get('flow_log', [])
+             if f.get('from') == org_label or f.get('to') == org_label)
+
     participated = []
     for t in tasks:
-        if not t['id'].startswith('JJC'): continue
-        for f in t.get('flow_log',[]):
-            if f.get('from')==org_label or f.get('to')==org_label:
+        if not t['id'].startswith('JJC'):
+            continue
+        for f in t.get('flow_log', []):
+            if f.get('from') == org_label or f.get('to') == org_label:
                 if t['id'] not in [x['id'] for x in participated]:
-                    participated.append({'id':t['id'],'title':t.get('title',''),'state':t.get('state','')})
+                    participated.append({'id': t['id'], 'title': t.get('title', ''), 'state': t.get('state', '')})
                 break
-    return {'tasks_done':len(done),'tasks_active':len(active),
-            'flow_participations':fl,'participated_edicts':participated}
+
+    timeout_count = 0
+    scheduler_retries = 0
+    task_tokens = 0
+    task_cost_usd = 0.0
+    task_elapsed_sec = 0
+    merit_history = []
+    for t in owned:
+        autopsy = t.get('autopsy') or {}
+        sched = t.get('_scheduler') or t.get('scheduler') or {}
+        reason_parts = [
+            str(t.get('block', '')).lower(),
+            str(autopsy.get('reason', '')).lower(),
+            str(sched.get('stallReason', '')).lower(),
+        ]
+        if any(k in ' '.join(reason_parts) for k in ('timeout', 'timed out', '超时')):
+            timeout_count += 1
+        scheduler_retries += int(sched.get('retryCount') or 0)
+        for log in t.get('progress_log', []) or []:
+            task_tokens += int(log.get('tokens') or 0)
+            task_cost_usd += float(log.get('cost') or 0.0)
+            task_elapsed_sec += int(log.get('elapsed') or 0)
+
+        merit_delta = 0
+        if t.get('state') == 'Done':
+            merit_delta += 10
+        elif t.get('state') == 'Blocked':
+            merit_delta -= 4
+        merit_delta -= int(sched.get('retryCount') or 0)
+        if any(k in ' '.join(reason_parts) for k in ('timeout', 'timed out', '超时')):
+            merit_delta -= 2
+        if t.get('state') in ('Doing', 'Review', 'Assigned'):
+            merit_delta += 2
+        merit_history.append({
+            'task_id': t.get('id', ''),
+            'score': merit_delta,
+            'state': t.get('state', ''),
+        })
+
+    terminal = len(done) + len(blocked)
+    success_rate = round(len(done) / terminal, 4) if terminal else 0.0
+    timeout_rate = round(timeout_count / len(owned), 4) if owned else 0.0
+    sla_score = max(0, len(done) * 20 - len(blocked) * 4 - timeout_count * 2 - scheduler_retries + len(active) * 2)
+    productivity = success_rate * 100 + len(done) * 5 + max(0, len(active))
+    stability = max(0.0, 100 - timeout_count * 20 - scheduler_retries * 5 - len(blocked) * 10)
+    efficiency = max(0.0, 100 - task_elapsed_sec / 30 - task_cost_usd * 50)
+    composite_score = round(productivity * 0.45 + stability * 0.35 + efficiency * 0.20 + timeout_count * (2.3 if len(active) else 1.25), 2)
+
+    return {
+        'tasks_done': len(done),
+        'tasks_blocked': len(blocked),
+        'tasks_active': len(active),
+        'tasks_total': len(owned),
+        'flow_participations': fl,
+        'participated_edicts': participated,
+        'success_rate': success_rate,
+        'timeout_count': timeout_count,
+        'timeout_rate': timeout_rate,
+        'scheduler_retries': scheduler_retries,
+        'task_tokens': task_tokens,
+        'task_cost_usd': round(task_cost_usd, 4),
+        'task_elapsed_sec': task_elapsed_sec,
+        'sla_score': sla_score,
+        'productivity_score': round(productivity, 2),
+        'stability_score': round(stability, 2),
+        'efficiency_score': round(efficiency, 2),
+        'composite_score': composite_score,
+        'merit_history': merit_history[-8:],
+    }
 
 def get_hb(agent_id, live_tasks):
     for t in live_tasks:
@@ -184,13 +254,46 @@ def main():
             'last_active': ss['last_active'],
             'heartbeat': hb,
             'tasks_done': ts['tasks_done'],
+            'tasks_blocked': ts['tasks_blocked'],
             'tasks_active': ts['tasks_active'],
+            'tasks_total': ts['tasks_total'],
             'flow_participations': ts['flow_participations'],
             'participated_edicts': ts['participated_edicts'],
-            'merit_score': ts['tasks_done']*10 + ts['flow_participations']*2 + min(ss['sessions'],20),
+            'success_rate': ts['success_rate'],
+            'timeout_count': ts['timeout_count'],
+            'timeout_rate': ts['timeout_rate'],
+            'scheduler_retries': ts['scheduler_retries'],
+            'task_tokens': ts['task_tokens'],
+            'task_cost_usd': ts['task_cost_usd'],
+            'task_cost_cny': round(ts['task_cost_usd'] * 7.25, 2),
+            'task_elapsed_sec': ts['task_elapsed_sec'],
+            'sla_score': ts['sla_score'],
+            'productivity_score': ts['productivity_score'],
+            'stability_score': ts['stability_score'],
+            'efficiency_score': ts['efficiency_score'],
+            'composite_score': ts['composite_score'],
+            'merit_history': ts['merit_history'],
+            'merit_score': ts['tasks_done']*10 + ts['flow_participations']*2 + min(ss['sessions'],20) + ts['sla_score'],
         })
 
-    result.sort(key=lambda x: x['merit_score'], reverse=True)
+    result.sort(key=lambda x: (x['merit_score'], x.get('composite_score', 0)), reverse=True)
+    top_tier = result[:max(1, min(3, len(result)))]
+    bottom_tier = result[-max(1, min(3, len(result))):] if result else []
+    top_ids = {
+        r['id'] for r in top_tier
+        if (r.get('tasks_done', 0) > r.get('tasks_blocked', 0) and r.get('success_rate', 0) >= 0.5)
+    }
+    bottom_ids = {
+        r['id'] for r in result
+        if (r.get('tasks_blocked', 0) > 0 or r.get('timeout_count', 0) > 0)
+    }
+    for r in result:
+        tags = []
+        if r['id'] in top_ids:
+            tags.append('能臣')
+        if r['id'] in bottom_ids:
+            tags.append('需训练')
+        r['tags'] = tags
     for i, r in enumerate(result): r['merit_rank'] = i+1
 
     totals = {
@@ -199,7 +302,18 @@ def main():
         'cost_usd':     round(sum(r['cost_usd'] for r in result), 2),
         'cost_cny':     round(sum(r['cost_cny'] for r in result), 2),
         'tasks_done':   sum(r['tasks_done'] for r in result),
+        'tasks_blocked': sum(r['tasks_blocked'] for r in result),
+        'tasks_total':  sum(r['tasks_total'] for r in result),
+        'timeout_count': sum(r['timeout_count'] for r in result),
+        'scheduler_retries': sum(r['scheduler_retries'] for r in result),
+        'task_tokens': sum(r['task_tokens'] for r in result),
+        'task_elapsed_sec': sum(r['task_elapsed_sec'] for r in result),
+        'task_cost_usd': round(sum(r['task_cost_usd'] for r in result), 4),
+        'task_cost_cny': round(sum(r['task_cost_cny'] for r in result), 2),
     }
+    terminal_total = totals['tasks_done'] + totals['tasks_blocked']
+    totals['success_rate'] = round(totals['tasks_done'] / terminal_total, 4) if terminal_total else 0.0
+    totals['timeout_rate'] = round(totals['timeout_count'] / totals['tasks_total'], 4) if totals['tasks_total'] else 0.0
     top = max(result, key=lambda x: x['merit_score'], default={})
 
     payload = {
@@ -207,6 +321,7 @@ def main():
         'officials': result,
         'totals': totals,
         'top_official': top.get('label',''),
+        'top': top,
     }
     atomic_json_write(DATA/'officials_stats.json', payload)
     log.info(f'{len(result)} officials | cost=¥{totals["cost_cny"]} | top={top.get("label","")}')

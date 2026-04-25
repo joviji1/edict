@@ -8,6 +8,7 @@
 事件投递由 OutboxRelay worker 异步完成，保证 DB/Event 原子一致。
 """
 
+import copy
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -26,6 +27,18 @@ from .event_bus import (
 )
 
 log = logging.getLogger("edict.task_service")
+
+_HIGH_RISK_TRANSITIONS = {
+    (TaskState.Review, TaskState.Done),
+    (TaskState.Doing, TaskState.Cancelled),
+    (TaskState.Menxia, TaskState.Cancelled),
+}
+
+_CONFIRM_AUTHORITY = {
+    TaskState.Review: "menxia",
+    TaskState.Doing: "shangshu",
+    TaskState.Menxia: "zhongshu",
+}
 
 
 class TaskService:
@@ -130,43 +143,107 @@ class TaskService:
                 f"Allowed: {[s.value for s in allowed]}"
             )
 
-        task.state = new_state
-        task.org = Task.org_for_state(new_state, task.assignee_org)
-        if reason:
-            task.now = reason
-        task.updated_at = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc)
+        meta = copy.deepcopy(task.meta or {})
+        target_state = new_state
+
+        if (old_state, new_state) in _HIGH_RISK_TRANSITIONS:
+            task.state = TaskState.PendingConfirm
+            task.org = Task.org_for_state(TaskState.PendingConfirm, task.assignee_org)
+            task.now = reason or f"待确认: {old_state.value}→{new_state.value}"
+            meta["pending_confirm"] = {
+                "target_state": new_state.value,
+                "requested_by": agent,
+                "requested_at": now.isoformat(),
+                "confirm_by": _CONFIRM_AUTHORITY.get(old_state, "shangshu"),
+                "risk_key": f"{old_state.value}->{new_state.value}",
+                "status": "pending",
+            }
+            gate_checks = list(meta.get("gate_checks") or [])
+            gate_checks.append(
+                {
+                    "at": now.isoformat(),
+                    "gate": "high_risk_transition",
+                    "from": old_state.value,
+                    "to": new_state.value,
+                    "confirm_by": _CONFIRM_AUTHORITY.get(old_state, "shangshu"),
+                    "result": "pending",
+                }
+            )
+            meta["gate_checks"] = gate_checks
+            effective_new_state = TaskState.PendingConfirm
+            effective_reason = task.now
+        else:
+            task.state = new_state
+            task.org = Task.org_for_state(new_state, task.assignee_org)
+            if reason:
+                task.now = reason
+            if old_state == TaskState.PendingConfirm:
+                pending = meta.get("pending_confirm") or {}
+                gate_checks = list(meta.get("gate_checks") or [])
+                gate_checks.append(
+                    {
+                        "at": now.isoformat(),
+                        "gate": "high_risk_transition",
+                        "from": old_state.value,
+                        "to": new_state.value,
+                        "confirm_by": pending.get("confirm_by"),
+                        "risk_key": pending.get("risk_key"),
+                        "result": "approved" if new_state == target_state else "rejected",
+                    }
+                )
+                meta["gate_checks"] = gate_checks
+                meta.pop("pending_confirm", None)
+            effective_new_state = new_state
+            effective_reason = reason
+
+        if effective_new_state in TERMINAL_STATES:
+            memory_extracted = dict(meta.get("memory_extracted") or {})
+            event_key = "done" if effective_new_state == TaskState.Done else "blocked"
+            memory_extracted.setdefault(
+                event_key,
+                {
+                    "at": now.isoformat(),
+                    "agent": agent,
+                    "source": "api-transition",
+                },
+            )
+            meta["memory_extracted"] = memory_extracted
+
+        task.meta = meta
+        task.updated_at = now
 
         # 在行锁保护下安全追加 flow_log
         flow_entry = {
             "from": old_state.value,
-            "to": new_state.value,
+            "to": effective_new_state.value,
             "agent": agent,
-            "reason": reason,
-            "ts": datetime.now(timezone.utc).isoformat(),
+            "reason": effective_reason,
+            "ts": now.isoformat(),
         }
         if task.flow_log is None:
             task.flow_log = []
         task.flow_log = [*task.flow_log, flow_entry]
 
         # 事件写入 outbox（同一事务）
-        topic = TOPIC_TASK_COMPLETED if new_state in TERMINAL_STATES else TOPIC_TASK_STATUS
+        topic = TOPIC_TASK_COMPLETED if effective_new_state in TERMINAL_STATES else TOPIC_TASK_STATUS
         outbox = OutboxEvent(
             topic=topic,
             trace_id=str(task.trace_id),
-            event_type=f"task.state.{new_state.value}",
+            event_type=f"task.state.{effective_new_state.value}",
             producer=agent,
             payload={
                 "task_id": str(task_id),
                 "from": old_state.value,
-                "to": new_state.value,
-                "reason": reason,
+                "to": effective_new_state.value,
+                "reason": effective_reason,
                 "assignee_org": task.assignee_org,
             },
         )
         self.db.add(outbox)
 
         await self.db.commit()
-        log.info(f"Task {task_id} state: {old_state.value} → {new_state.value} by {agent}")
+        log.info(f"Task {task_id} state: {old_state.value} → {effective_new_state.value} by {agent}")
         return task
 
     # ── 派发请求 ──
@@ -292,6 +369,8 @@ class TaskService:
     # ── 内部 ──
 
     async def _get_task(self, task_id: uuid.UUID) -> Task:
+        if isinstance(task_id, str):
+            task_id = uuid.UUID(task_id)
         task = await self.db.get(Task, task_id)
         if task is None:
             raise ValueError(f"Task not found: {task_id}")

@@ -13,7 +13,7 @@ Endpoints:
 """
 import json, pathlib, subprocess, sys, threading, argparse, datetime, logging, re, os, socket
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 from urllib.request import Request, urlopen
 
 # JWT 认证模块
@@ -117,7 +117,14 @@ def _task_source_score(task_file: pathlib.Path):
 def get_task_data_dir():
     """自动选择当前任务数据目录，并缓存结果以保持一次服务期内稳定。"""
     global _ACTIVE_TASK_DATA_DIR
-    if _ACTIVE_TASK_DATA_DIR and _ACTIVE_TASK_DATA_DIR.is_dir():
+    if _ACTIVE_TASK_DATA_DIR:
+        try:
+            if pathlib.Path(_ACTIVE_TASK_DATA_DIR).is_dir():
+                return pathlib.Path(_ACTIVE_TASK_DATA_DIR)
+        except TypeError:
+            pass
+    if DATA and pathlib.Path(DATA).is_dir():
+        _ACTIVE_TASK_DATA_DIR = pathlib.Path(DATA)
         return _ACTIVE_TASK_DATA_DIR
     best_dir = DATA
     best_score = (-1, -1, -1, -1)
@@ -141,6 +148,7 @@ def load_tasks():
 
 def save_tasks(tasks):
     task_data_dir = get_task_data_dir()
+    _notify_pending_confirm_tasks(tasks, task_data_dir)
     atomic_json_write(task_data_dir / 'tasks_source.json', tasks)
     # Trigger refresh (异步，不阻塞，避免僵尸进程)
     script = task_data_dir.parent / 'scripts' / 'refresh_live_data.py'
@@ -153,6 +161,95 @@ def save_tasks(tasks):
         except Exception as e:
             log.warning(f'refresh_live_data.py 触发失败: {e}')
     threading.Thread(target=_refresh, daemon=True).start()
+
+
+def _load_notification_settings(base_dir=None):
+    base_dir = pathlib.Path(base_dir or get_task_data_dir())
+    cfg = read_json(base_dir / 'morning_brief_config.json', {})
+    notification = cfg.get('notification', {})
+    if not notification and cfg.get('feishu_webhook'):
+        notification = {'enabled': True, 'channel': 'feishu', 'webhook': cfg['feishu_webhook']}
+    if not notification.get('enabled', True):
+        return None
+    webhook = str(notification.get('webhook', '')).strip()
+    if not webhook:
+        return None
+    channel_type = str(notification.get('channel', 'feishu')).strip() or 'feishu'
+    channel_cls = get_channel(channel_type)
+    if not channel_cls:
+        log.warning(f'未知的通知渠道: {channel_type}')
+        return None
+    if not channel_cls.validate_webhook(webhook):
+        log.warning(f'{channel_cls.label} Webhook URL 不合法: {webhook}')
+        return None
+    return {'channel_cls': channel_cls, 'webhook': webhook}
+
+
+def _send_custom_notification(title, content, url=None, base_dir=None):
+    settings = _load_notification_settings(base_dir)
+    if not settings:
+        return False
+    try:
+        return bool(settings['channel_cls'].send(settings['webhook'], title, content, url))
+    except Exception as e:
+        log.warning(f'发送通知失败: {e}')
+        return False
+
+
+def _task_notification_url(task_id):
+    return f'http://127.0.0.1:{_DASHBOARD_PORT}/?taskId={quote(str(task_id))}'
+
+
+def _notify_pending_confirm_tasks(tasks, base_dir=None):
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        if task.get('state') != 'PendingConfirm':
+            continue
+        pending = task.get('pending_confirm') or {}
+        notifications = task.setdefault('notifications', {})
+        if notifications.get('pending_confirm_sent'):
+            continue
+        source_state = ''
+        gate_checks = list(task.get('gate_checks') or [])
+        if gate_checks:
+            source_state = gate_checks[-1].get('from') or ''
+        source_state = source_state or pending.get('source_state') or 'Unknown'
+        target_state = pending.get('target_state') or 'Unknown'
+        title = f'⏳ 待审批 · {task.get("title") or task.get("id") or "未命名任务"}'
+        content = (
+            f'任务：{task.get("id") or "-"}\n'
+            f'标题：{task.get("title") or "-"}\n'
+            f'当前状态：PendingConfirm\n'
+            f'风险门禁：{source_state} → {target_state}\n'
+            f'申请部门：{pending.get("requested_by") or task.get("org") or "-"}\n'
+            f'审批人：{pending.get("confirm_by") or "-"}\n'
+            f'说明：{task.get("now") or "待门禁审批"}'
+        )
+        if _send_custom_notification(title, content, _task_notification_url(task.get('id')), base_dir=base_dir):
+            notifications['pending_confirm_sent'] = True
+            notifications['pending_confirm_sent_at'] = now_iso()
+
+
+def _notify_review_result(task, action, comment='', base_dir=None):
+    if not isinstance(task, dict):
+        return False
+    label = '已准奏' if action == 'approve' else '已封驳'
+    title = f'📣 审批结果 · {task.get("title") or task.get("id") or "未命名任务"}'
+    content = (
+        f'任务：{task.get("id") or "-"}\n'
+        f'标题：{task.get("title") or "-"}\n'
+        f'审批结果：{label}\n'
+        f'当前状态：{task.get("state") or "-"}\n'
+        f'当前说明：{task.get("now") or "-"}\n'
+        f'批注：{comment or "无"}'
+    )
+    success = _send_custom_notification(title, content, _task_notification_url(task.get('id')), base_dir=base_dir)
+    if success:
+        notifications = task.setdefault('notifications', {})
+        notifications['review_result_sent'] = action
+        notifications['review_result_sent_at'] = now_iso()
+    return success
 
 
 def handle_task_action(task_id, action, reason):
@@ -241,6 +338,127 @@ def update_task_todos(task_id, todos):
     task['updatedAt'] = now_iso()
     save_tasks(tasks)
     return {'ok': True, 'message': f'{task_id} todos 已更新'}
+
+
+def adopt_court_conclusion(session_id, apply=None, task_id=''):
+    """将朝堂议政结构化结论显式采纳为 task/todo/rule 台账。"""
+    session = cd_get(session_id)
+    if not session:
+        return {'ok': False, 'error': 'session not found'}
+    conclusion = session.get('conclusion') or {}
+    actions = conclusion.get('actions') or []
+    if not actions:
+        return {'ok': False, 'error': 'no conclusion actions'}
+
+    apply = apply or {'tasks': True, 'todos': True, 'rules': True}
+    target_task_id = task_id or session.get('task_id', '')
+    counts = {'tasks': 0, 'todos': 0, 'rules': 0, 'skipped': 0}
+    adopted_keys = set((session.get('adopted') or {}).get('action_keys', []))
+
+    tasks = load_tasks()
+    target_task = next((t for t in tasks if t.get('id') == target_task_id), None) if target_task_id else None
+
+    for idx, action in enumerate(actions):
+        typ = str(action.get('type', 'todo')).lower()
+        key = f"{session_id}:{idx}:{typ}:{action.get('title') or action.get('content')}"
+        if key in adopted_keys:
+            counts['skipped'] += 1
+            continue
+
+        if typ == 'todo' and apply.get('todos', True):
+            if not target_task:
+                counts['skipped'] += 1
+                continue
+            todos = target_task.setdefault('todos', [])
+            todo_id = f'court-{session_id}-{idx}'
+            if any(str(td.get('id')) == todo_id for td in todos):
+                counts['skipped'] += 1
+                continue
+            item = {
+                'id': todo_id,
+                'title': action.get('title') or action.get('content'),
+                'status': 'not-started',
+                'detail': action.get('content') or action.get('reason') or '',
+                'source': 'court_discuss',
+                'sessionId': session_id,
+                'owner': action.get('owner', ''),
+                'priority': action.get('priority', 'normal'),
+            }
+            if action.get('acceptance'):
+                item['acceptance'] = action.get('acceptance')
+            todos.append(item)
+            target_task['updatedAt'] = now_iso()
+            counts['todos'] += 1
+            adopted_keys.add(key)
+
+        elif typ == 'task' and apply.get('tasks', True):
+            new_id = f'COURT-{session_id}-{idx}'
+            if any(t.get('id') == new_id for t in tasks):
+                counts['skipped'] += 1
+                continue
+            tasks.insert(0, {
+                'id': new_id,
+                'title': action.get('title') or action.get('content'),
+                'state': 'Pending',
+                'org': action.get('owner') or '尚书省',
+                'official': action.get('owner', ''),
+                'now': action.get('reason') or '由朝堂议政结论生成',
+                'eta': '-',
+                'block': '无',
+                'output': '',
+                'ac': action.get('acceptance', ''),
+                'source': 'court_discuss',
+                'sourceSessionId': session_id,
+                'flow_log': [{
+                    'at': now_iso(),
+                    'from': '朝堂议政',
+                    'to': action.get('owner') or '尚书省',
+                    'remark': action.get('reason') or '采纳议政结论',
+                }],
+                'todos': [],
+                'updatedAt': now_iso(),
+            })
+            counts['tasks'] += 1
+            adopted_keys.add(key)
+
+        elif typ == 'rule' and apply.get('rules', True):
+            shared_file = get_task_data_dir() / 'shared_memory.json'
+            content = action.get('content') or action.get('title')
+
+            def _add_rule(data):
+                if not isinstance(data, dict):
+                    data = {'rules': []}
+                rules = data.setdefault('rules', [])
+                if any(r.get('content') == content and r.get('sourceSessionId') == session_id for r in rules):
+                    return data
+                rules.append({
+                    'content': content,
+                    'added_by': 'court_discuss',
+                    'at': now_iso(),
+                    'sourceSessionId': session_id,
+                    'scope': action.get('scope', 'global'),
+                    'reason': action.get('reason', ''),
+                })
+                return data
+
+            atomic_json_update(shared_file, _add_rule, {'rules': []})
+            counts['rules'] += 1
+            adopted_keys.add(key)
+        else:
+            counts['skipped'] += 1
+
+    if counts['tasks'] or counts['todos']:
+        save_tasks(tasks)
+
+    try:
+        import court_discuss as _cd
+        raw = getattr(_cd, '_sessions', {}).get(session_id)
+        if raw is not None:
+            raw['adopted'] = {'at': now_iso(), 'action_keys': sorted(adopted_keys), 'counts': counts}
+    except Exception:
+        pass
+
+    return {'ok': True, 'sessionId': session_id, 'taskId': target_task_id, 'counts': counts}
 
 
 def read_skill_content(agent_id, skill_name):
@@ -688,19 +906,49 @@ def handle_create_task(title, org='中书省', official='中书令', priority='n
 
 
 def handle_review_action(task_id, action, comment=''):
-    """门下省御批：准奏/封驳。"""
+    """门下省御批：准奏/封驳。兼容 PendingConfirm 制度门禁。"""
     tasks = load_tasks()
     task = next((t for t in tasks if t.get('id') == task_id), None)
     if not task:
         return {'ok': False, 'error': f'任务 {task_id} 不存在'}
-    if task.get('state') not in ('Review', 'Menxia'):
+    if task.get('state') not in ('Review', 'Menxia', 'PendingConfirm'):
         return {'ok': False, 'error': f'任务 {task_id} 当前状态为 {task.get("state")}，无法御批'}
 
     _ensure_scheduler(task)
     _scheduler_snapshot(task, f'review-before-{action}')
 
+    pending = task.get('pending_confirm') or {}
+    gate_checks = list(task.get('gate_checks') or [])
+    is_pending_confirm = task.get('state') == 'PendingConfirm'
+
     if action == 'approve':
-        if task['state'] == 'Menxia':
+        if is_pending_confirm:
+            target_state = pending.get('target_state') or 'Done'
+            task['state'] = target_state
+            if target_state == 'Done':
+                task['now'] = '御批通过，任务完成'
+                remark = f'✅ 准奏：{comment or "门禁确认通过"}'
+                to_dept = '皇上'
+            elif target_state == 'Cancelled':
+                task['now'] = '御批同意撤销'
+                remark = f'✅ 准奏撤销：{comment or "门禁确认通过"}'
+                to_dept = '尚书省'
+            else:
+                task['now'] = f'御批通过，转入 {target_state}'
+                remark = f'✅ 准奏：{comment or "门禁确认通过"}'
+                to_dept = target_state
+            gate_checks.append({
+                'at': now_iso(),
+                'gate': 'high_risk_transition',
+                'from': gate_checks[-1].get('from') if gate_checks else pending.get('source_state', 'PendingConfirm'),
+                'to': target_state,
+                'confirm_by': pending.get('confirm_by', 'menxia'),
+                'risk_key': pending.get('risk_key'),
+                'result': 'approved',
+            })
+            task.pop('pending_confirm', None)
+            task['gate_checks'] = gate_checks
+        elif task['state'] == 'Menxia':
             task['state'] = 'Assigned'
             task['now'] = '门下省准奏，移交尚书省派发'
             remark = f'✅ 准奏：{comment or "门下省审议通过"}'
@@ -717,6 +965,18 @@ def handle_review_action(task_id, action, comment=''):
         task['now'] = f'封驳退回中书省修订（第{round_num}轮）'
         remark = f'🚫 封驳：{comment or "需要修改"}'
         to_dept = '中书省'
+        if is_pending_confirm:
+            gate_checks.append({
+                'at': now_iso(),
+                'gate': 'high_risk_transition',
+                'from': gate_checks[-1].get('from') if gate_checks else pending.get('source_state', 'PendingConfirm'),
+                'to': pending.get('target_state', 'Done'),
+                'confirm_by': pending.get('confirm_by', 'menxia'),
+                'risk_key': pending.get('risk_key'),
+                'result': 'rejected',
+            })
+            task.pop('pending_confirm', None)
+            task['gate_checks'] = gate_checks
     else:
         return {'ok': False, 'error': f'未知操作: {action}'}
 
@@ -729,14 +989,15 @@ def handle_review_action(task_id, action, comment=''):
     _scheduler_mark_progress(task, f'审议动作 {action} -> {task.get("state")}')
     task['updatedAt'] = now_iso()
     save_tasks(tasks)
+    _notify_review_result(task, action, comment, get_task_data_dir())
 
     # 🚀 审批后自动派发对应 Agent
     new_state = task['state']
-    if new_state not in ('Done',):
+    if new_state not in ('Done', 'Cancelled'):
         dispatch_for_state(task_id, task, new_state)
 
     label = '已准奏' if action == 'approve' else '已封驳'
-    dispatched = ' (已自动派发 Agent)' if new_state != 'Done' else ''
+    dispatched = ' (已自动派发 Agent)' if new_state not in ('Done', 'Cancelled') else ''
     return {'ok': True, 'message': f'{task_id} {label}{dispatched}'}
 
 
@@ -1077,7 +1338,564 @@ def get_scheduler_state(task_id):
         'org': task.get('org', ''),
         'scheduler': sched,
         'stalledSec': stalled_sec,
+        'timeoutClass': _classify_timeout_reason(task),
         'checkedAt': now_iso(),
+        'pendingConfirm': task.get('pending_confirm'),
+        'gateChecks': task.get('gate_checks', []),
+    }
+
+
+def get_approval_panel():
+    """返回独立审批面板所需数据：待批列表 + 全量批示历史。"""
+    tasks = load_tasks()
+    pending_items = []
+    history_items = []
+
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        task_id = str(task.get('id', '') or '')
+        if not task_id:
+            continue
+        title = task.get('title') or task_id
+        task_state = task.get('state', '')
+        task_org = task.get('org', '')
+        task_now = task.get('now', '')
+        pending = task.get('pending_confirm') or {}
+        gate_checks = list(task.get('gate_checks') or [])
+
+        if task_state == 'PendingConfirm' and pending:
+            latest_pending = None
+            for entry in reversed(gate_checks):
+                if isinstance(entry, dict) and entry.get('result') == 'pending':
+                    latest_pending = entry
+                    break
+            pending_items.append({
+                'taskId': task_id,
+                'title': title,
+                'state': task_state,
+                'org': task_org,
+                'now': task_now,
+                'requestedBy': pending.get('requested_by', ''),
+                'requestedAt': pending.get('requested_at', ''),
+                'confirmBy': pending.get('confirm_by', ''),
+                'targetState': pending.get('target_state', ''),
+                'riskKey': pending.get('risk_key', ''),
+                'sourceState': pending.get('source_state') or ((latest_pending or {}).get('from') if latest_pending else ''),
+                'latestPendingCheck': latest_pending,
+            })
+
+        for idx, entry in enumerate(gate_checks):
+            if not isinstance(entry, dict):
+                continue
+            history_items.append({
+                'taskId': task_id,
+                'title': title,
+                'taskState': task_state,
+                'org': task_org,
+                'now': task_now,
+                'index': idx,
+                'at': entry.get('at', ''),
+                'gate': entry.get('gate', ''),
+                'from': entry.get('from', ''),
+                'to': entry.get('to', ''),
+                'confirmBy': entry.get('confirm_by', ''),
+                'riskKey': entry.get('risk_key', ''),
+                'result': entry.get('result', ''),
+            })
+
+    pending_items.sort(key=lambda item: item.get('requestedAt') or '', reverse=True)
+    history_items.sort(key=lambda item: item.get('at') or '', reverse=True)
+    stats = {
+        'pending': len(pending_items),
+        'approved': sum(1 for x in history_items if x.get('result') == 'approved'),
+        'rejected': sum(1 for x in history_items if x.get('result') == 'rejected'),
+        'pendingHistory': sum(1 for x in history_items if x.get('result') == 'pending'),
+        'totalHistory': len(history_items),
+    }
+    return {
+        'ok': True,
+        'checkedAt': now_iso(),
+        'pending': pending_items,
+        'history': history_items,
+        'stats': stats,
+    }
+
+
+def _classify_timeout_reason(task):
+    sched = (task.get('_scheduler') or task.get('scheduler') or {})
+    autopsy = task.get('autopsy') or {}
+    parts = [
+        str(task.get('block', '')).lower(),
+        str(task.get('now', '')).lower(),
+        str(autopsy.get('reason', '')).lower(),
+        str(sched.get('stallReason', '')).lower(),
+        str(sched.get('lastDispatchStatus', '')).lower(),
+        ' '.join(str((p or {}).get('text', '')).lower() for p in (task.get('progress_log') or [])[-5:]),
+    ]
+    merged = ' '.join(parts)
+    mapping = [
+        ('provider_timeout', ('provider_timeout', 'provider timeout', '模型接口超时', '上游超时', 'llm timeout', 'api timeout')),
+        ('dispatch_timeout', ('dispatch timeout', '派发超时', 'dispatch_timeout', 'queued timeout')),
+        ('review_stalled', ('pendingconfirm', 'review timeout', '审核超时', '审议超时', 'gate pending')),
+        ('execution_stalled', ('卡住', '停滞', 'stalled', '无进展', 'blocked by dependency', '等待依赖')),
+        ('network_timeout', ('network timeout', '连接超时', 'read timeout', 'connect timeout')),
+    ]
+    for code, keywords in mapping:
+        if any(k in merged for k in keywords):
+            return code
+    if 'timeout' in merged or '超时' in merged:
+        return 'generic_timeout'
+    return 'healthy'
+
+
+def get_timeout_summary(limit=8):
+    tasks = load_tasks()
+    now_dt = datetime.datetime.now(datetime.timezone.utc)
+    categories = []
+    groups = {}
+    summary_tasks = []
+
+    for task in tasks:
+        if task.get('archived'):
+            continue
+        sched = _ensure_scheduler(task)
+        reason = _classify_timeout_reason(task)
+        last_progress = _parse_iso(sched.get('lastProgressAt') or task.get('updatedAt'))
+        stalled_sec = max(0, int((now_dt - last_progress).total_seconds())) if last_progress else 0
+        is_interesting = reason != 'healthy' or stalled_sec >= int(sched.get('stallThresholdSec') or 600)
+        if not is_interesting:
+            continue
+        entry = groups.setdefault(reason, {
+            'reason': reason,
+            'count': 0,
+            'blocked': 0,
+            'doing': 0,
+            'maxStalledSec': 0,
+            'sampleTaskIds': [],
+        })
+        entry['count'] += 1
+        if task.get('state') == 'Blocked':
+            entry['blocked'] += 1
+        if task.get('state') in ('Doing', 'Review', 'Assigned', 'PendingConfirm'):
+            entry['doing'] += 1
+        entry['maxStalledSec'] = max(entry['maxStalledSec'], stalled_sec)
+        if len(entry['sampleTaskIds']) < 5:
+            entry['sampleTaskIds'].append(task.get('id', ''))
+        summary_tasks.append({
+            'taskId': task.get('id', ''),
+            'title': task.get('title', ''),
+            'state': task.get('state', ''),
+            'org': task.get('org', ''),
+            'reason': reason,
+            'stalledSec': stalled_sec,
+            'retryCount': int(sched.get('retryCount') or 0),
+            'escalationLevel': int(sched.get('escalationLevel') or 0),
+            'lastDispatchStatus': sched.get('lastDispatchStatus', 'idle'),
+        })
+
+    categories = sorted(groups.values(), key=lambda x: (-x['count'], -x['maxStalledSec'], x['reason']))
+    hottest = sorted(summary_tasks, key=lambda x: (-x['stalledSec'], -x['retryCount'], x['taskId']))[:max(1, int(limit or 8))]
+    return {
+        'ok': True,
+        'checkedAt': now_iso(),
+        'categories': categories,
+        'tasks': hottest,
+        'totals': {
+            'interestingTasks': len(summary_tasks),
+            'categories': len(categories),
+            'blocked': sum(1 for t in summary_tasks if t['state'] == 'Blocked'),
+            'active': sum(1 for t in summary_tasks if t['state'] in ('Doing', 'Review', 'Assigned', 'PendingConfirm')),
+        },
+    }
+
+
+def get_jidipu_panel(limit=12):
+    """急递铺最小闭环：聚合派发、通知、审批、重试/升级等消息流摘要。"""
+    tasks = load_tasks()
+    items = []
+    stats = {
+        'dispatches': 0,
+        'notifications': 0,
+        'retries': 0,
+        'escalations': 0,
+        'approvals': 0,
+    }
+
+    def _push(item):
+        items.append(item)
+        kind = item.get('kind')
+        if kind == 'dispatch':
+            stats['dispatches'] += 1
+        elif kind == 'notification':
+            stats['notifications'] += 1
+        elif kind == 'retry':
+            stats['retries'] += 1
+        elif kind == 'escalation':
+            stats['escalations'] += 1
+        elif kind == 'approval':
+            stats['approvals'] += 1
+
+    for task in tasks:
+        if not isinstance(task, dict) or task.get('archived'):
+            continue
+        task_id = task.get('id') or '-'
+        title = task.get('title') or '-'
+        state = task.get('state') or '-'
+        flow_log = list(task.get('flow_log') or [])
+        notifications = task.get('notifications') or {}
+        gate_checks = list(task.get('gate_checks') or [])
+        sched = _ensure_scheduler(task)
+        dispatch_target = sched.get('lastDispatchAgent') or sched.get('lastDispatchTarget') or task.get('official') or task.get('org') or '-'
+
+        for entry in flow_log[-8:]:
+            if not isinstance(entry, dict):
+                continue
+            remark = str(entry.get('remark') or entry.get('reason') or '').strip()
+            if not remark:
+                continue
+            lower = remark.lower()
+            base = {
+                'taskId': task_id,
+                'title': title,
+                'state': state,
+                'at': entry.get('at') or task.get('updatedAt') or '',
+                'from': entry.get('from') or '-',
+                'to': entry.get('to') or '-',
+                'summary': remark,
+                'kind': '',
+                'kindLabel': '',
+            }
+            if '停滞升级' in remark or 'escalat' in lower:
+                base['kind'] = 'escalation'
+                base['kindLabel'] = '升级'
+                _push(base)
+            elif '停滞重试' in remark or '重试派发' in remark or 'retry' in lower:
+                base['kind'] = 'retry'
+                base['kindLabel'] = '重试'
+                _push(base)
+            elif any(key in remark for key in ('派发', '下旨', '接旨', '流转', '回奏')):
+                base['kind'] = 'dispatch'
+                base['kindLabel'] = '派发'
+                _push(base)
+            elif any(key in remark for key in ('准奏', '封驳', '御批', '批示')):
+                base['kind'] = 'approval'
+                base['kindLabel'] = '批示'
+                _push(base)
+
+        if notifications.get('pending_confirm_sent_at'):
+            _push({
+                'taskId': task_id,
+                'title': title,
+                'state': state,
+                'at': notifications.get('pending_confirm_sent_at') or '',
+                'from': '急递铺',
+                'to': dispatch_target,
+                'summary': '已发送 PendingConfirm 待批提醒',
+                'kind': 'notification',
+                'kindLabel': '通知',
+            })
+        if notifications.get('review_result_sent_at'):
+            action = notifications.get('review_result_sent') or 'unknown'
+            _push({
+                'taskId': task_id,
+                'title': title,
+                'state': state,
+                'at': notifications.get('review_result_sent_at') or '',
+                'from': '急递铺',
+                'to': dispatch_target,
+                'summary': f'已发送审批结果通知：{action}',
+                'kind': 'notification',
+                'kindLabel': '通知',
+            })
+
+        for gate in gate_checks[-5:]:
+            if not isinstance(gate, dict):
+                continue
+            result = str(gate.get('result') or '').lower()
+            if result not in {'approved', 'rejected', 'pending'}:
+                continue
+            label = {'approved': '准奏', 'rejected': '封驳', 'pending': '待批'}.get(result, result)
+            _push({
+                'taskId': task_id,
+                'title': title,
+                'state': state,
+                'at': gate.get('at') or gate.get('requested_at') or task.get('updatedAt') or '',
+                'from': gate.get('from') or '门下省',
+                'to': gate.get('to') or state,
+                'summary': f'审批流转：{label}（{gate.get("risk_key") or "-"}）',
+                'kind': 'approval',
+                'kindLabel': '批示',
+            })
+
+    items.sort(key=lambda item: (item.get('at') or '', item.get('taskId') or ''), reverse=True)
+    if limit > 0:
+        items = items[:limit]
+    stats['total'] = len(items)
+    return {
+        'ok': True,
+        'checkedAt': now_iso(),
+        'stats': stats,
+        'items': items,
+    }
+
+
+def get_command_panel(task_id):
+    tasks = load_tasks()
+    task = next((t for t in tasks if t.get('id') == task_id), None)
+    if not task:
+        return {'ok': False, 'error': f'任务 {task_id} 不存在'}
+    sched = _ensure_scheduler(task)
+    state = task.get('state', '')
+    terminal = state in _TERMINAL_STATES
+    blocked = state == 'Blocked'
+    timeout_class = _classify_timeout_reason(task)
+    commands = [
+        {
+            'action': 'retry',
+            'label': '🔁 重试派发',
+            'enabled': (not terminal and not blocked),
+            'reason': '重新向当前责任 Agent 派发',
+            'api': '/api/scheduler-retry',
+        },
+        {
+            'action': 'escalate',
+            'label': '📣 升级协调',
+            'enabled': not terminal,
+            'reason': '升级到门下/尚书协调处理',
+            'api': '/api/scheduler-escalate',
+        },
+        {
+            'action': 'rollback',
+            'label': '↩️ 回滚稳定点',
+            'enabled': bool((sched.get('snapshot') or {}).get('state')) and not terminal,
+            'reason': '恢复到最近稳定快照后重派发',
+            'api': '/api/scheduler-rollback',
+        },
+        {
+            'action': 'autopsy',
+            'label': '🧾 生成验尸',
+            'enabled': blocked or timeout_class != 'healthy',
+            'reason': '提炼失败根因与经验记忆',
+            'api': '/api/task-autopsy',
+        },
+        {
+            'action': 'scan',
+            'label': '🔍 立即扫描',
+            'enabled': True,
+            'reason': '按调度阈值重算重试/升级/回滚决策',
+            'api': '/api/scheduler-scan',
+        },
+    ]
+    return {
+        'ok': True,
+        'taskId': task_id,
+        'state': state,
+        'timeoutClass': timeout_class,
+        'commands': commands,
+        'snapshot': sched.get('snapshot') or {},
+        'checkedAt': now_iso(),
+    }
+
+
+def get_task_autopsy(task_id):
+    tasks = load_tasks()
+    task = next((t for t in tasks if t.get('id') == task_id), None)
+    if not task:
+        return {'ok': False, 'error': f'任务 {task_id} 不存在'}
+    autopsy = task.get('autopsy') or {}
+    path = autopsy.get('path', '')
+    if not path:
+        return {'ok': True, 'exists': False, 'taskId': task_id, 'autopsy': autopsy, 'content': ''}
+    fp = pathlib.Path(path)
+    if not fp.exists():
+        return {'ok': True, 'exists': False, 'taskId': task_id, 'autopsy': autopsy, 'content': ''}
+    try:
+        content = fp.read_text(encoding='utf-8', errors='replace')[:50000]
+    except Exception as e:
+        return {'ok': False, 'error': f'读取失败: {e}'}
+    return {'ok': True, 'exists': True, 'taskId': task_id, 'autopsy': autopsy, 'content': content}
+
+
+def _read_json_or_default(path, default):
+    try:
+        return atomic_json_read(path, default)
+    except Exception:
+        return default
+
+
+def _safe_excerpt(value, limit=240):
+    text = str(value or '').replace('\r', ' ').replace('\n', ' ')
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text[:limit]
+
+
+def _first_non_empty(*values):
+    for value in values:
+        if value not in (None, '', [], {}):
+            return value
+    return ''
+
+
+def _scan_task_memory_entries(task_data_dir):
+    task_memory_dir = pathlib.Path(task_data_dir) / 'task_memory'
+    entries = []
+    if not task_memory_dir.exists():
+        return entries
+    for fp in sorted(task_memory_dir.glob('*.json')):
+        payload = _read_json_or_default(fp, {})
+        if not isinstance(payload, dict):
+            continue
+        chain = payload.get('context_chain') or []
+        if not isinstance(chain, list):
+            chain = []
+        latest = chain[0] if chain and isinstance(chain[0], dict) else {}
+        decisions = latest.get('key_decisions') or []
+        warnings = latest.get('warnings') or []
+        task_id = fp.stem
+        entries.append({
+            'sourceType': 'task_memory',
+            'taskId': task_id,
+            'title': _first_non_empty(payload.get('title'), latest.get('title'), task_id),
+            'summary': _safe_excerpt(_first_non_empty(payload.get('summary'), latest.get('summary'), payload.get('task_name'), '')),
+            'agentId': _first_non_empty(payload.get('agent_id'), latest.get('agent_id'), ''),
+            'tags': [str(x) for x in (payload.get('tags') or latest.get('tags') or []) if str(x)],
+            'warnings': [_safe_excerpt(x, 180) for x in warnings if _safe_excerpt(x, 180)],
+            'keyDecisions': [_safe_excerpt(x, 180) for x in decisions if _safe_excerpt(x, 180)],
+            'updatedAt': _first_non_empty(payload.get('updated_at'), payload.get('updatedAt'), latest.get('at'), ''),
+            'path': str(fp),
+            'content': json.dumps(payload, ensure_ascii=False),
+        })
+    return entries
+
+
+def _scan_autopsy_entries(tasks):
+    entries = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        autopsy = task.get('autopsy') or {}
+        path = autopsy.get('path')
+        task_id = task.get('id', '')
+        content = ''
+        if path:
+            fp = pathlib.Path(path)
+            if fp.exists():
+                try:
+                    content = fp.read_text(encoding='utf-8', errors='replace')
+                except Exception:
+                    content = ''
+        entries.append({
+            'sourceType': 'autopsy',
+            'taskId': task_id,
+            'title': _first_non_empty(task.get('title'), task_id),
+            'summary': _safe_excerpt(_first_non_empty(autopsy.get('label'), autopsy.get('reason'), task.get('block'), task.get('now'))),
+            'agentId': _first_non_empty((task.get('memory_extracted') or {}).get('autopsy', {}).get('agent'), task.get('org'), ''),
+            'tags': [str(x) for x in [autopsy.get('reason'), autopsy.get('label'), task.get('state')] if str(x)],
+            'warnings': [_safe_excerpt(autopsy.get('reason'), 180)] if autopsy.get('reason') else [],
+            'keyDecisions': [_safe_excerpt(task.get('block'), 180)] if task.get('block') else [],
+            'updatedAt': _first_non_empty(autopsy.get('generatedAt'), task.get('updatedAt'), ''),
+            'path': str(path) if path else '',
+            'content': content,
+        })
+    return [entry for entry in entries if entry.get('path') or entry.get('summary')]
+
+
+def _scan_shared_rule_entries(task_data_dir):
+    shared_file = pathlib.Path(task_data_dir) / 'shared_memory.json'
+    payload = _read_json_or_default(shared_file, {})
+    if not isinstance(payload, dict):
+        return []
+    rules = payload.get('rules') or []
+    entries = []
+    for idx, rule in enumerate(rules):
+        if not isinstance(rule, dict):
+            continue
+        content = _safe_excerpt(rule.get('content') or rule.get('title'), 240)
+        if not content:
+            continue
+        entries.append({
+            'sourceType': 'shared_rule',
+            'taskId': _first_non_empty(rule.get('taskId'), rule.get('sourceTaskId'), f'rule-{idx+1}'),
+            'title': content,
+            'summary': _safe_excerpt(rule.get('reason') or content, 240),
+            'agentId': _first_non_empty(rule.get('added_by'), ''),
+            'tags': [str(x) for x in [rule.get('scope'), 'rule'] if str(x)],
+            'warnings': [],
+            'keyDecisions': [content],
+            'updatedAt': _first_non_empty(rule.get('at'), ''),
+            'path': str(shared_file),
+            'content': json.dumps(rule, ensure_ascii=False),
+        })
+    return entries
+
+
+def get_guoshiguan_panel(query='', limit=12):
+    task_data_dir = get_task_data_dir()
+    tasks = load_tasks()
+    entries = []
+    entries.extend(_scan_task_memory_entries(task_data_dir))
+    entries.extend(_scan_autopsy_entries(tasks))
+    entries.extend(_scan_shared_rule_entries(task_data_dir))
+
+    query = str(query or '').strip().lower()
+    if query:
+        def _matches(entry):
+            haystack = ' '.join([
+                str(entry.get('taskId', '')),
+                str(entry.get('title', '')),
+                str(entry.get('summary', '')),
+                str(entry.get('agentId', '')),
+                ' '.join(entry.get('tags') or []),
+                ' '.join(entry.get('warnings') or []),
+                ' '.join(entry.get('keyDecisions') or []),
+                str(entry.get('content', '')),
+            ]).lower()
+            return query in haystack
+        entries = [entry for entry in entries if _matches(entry)]
+
+    entries.sort(key=lambda item: item.get('updatedAt') or '', reverse=True)
+    limited = entries[:max(1, int(limit or 12))]
+    source_stats = {}
+    for entry in entries:
+        source = entry.get('sourceType') or 'unknown'
+        source_stats[source] = source_stats.get(source, 0) + 1
+
+    highlights = []
+    for entry in limited[:5]:
+        highlights.append({
+            'taskId': entry.get('taskId', ''),
+            'sourceType': entry.get('sourceType', ''),
+            'title': entry.get('title', ''),
+            'summary': entry.get('summary', ''),
+            'updatedAt': entry.get('updatedAt', ''),
+        })
+
+    return {
+        'ok': True,
+        'checkedAt': now_iso(),
+        'query': query,
+        'stats': {
+            'total': len(entries),
+            'shown': len(limited),
+            'taskMemory': source_stats.get('task_memory', 0),
+            'autopsy': source_stats.get('autopsy', 0),
+            'sharedRules': source_stats.get('shared_rule', 0),
+        },
+        'highlights': highlights,
+        'items': [{
+            'sourceType': entry.get('sourceType', ''),
+            'taskId': entry.get('taskId', ''),
+            'title': entry.get('title', ''),
+            'summary': entry.get('summary', ''),
+            'agentId': entry.get('agentId', ''),
+            'tags': entry.get('tags') or [],
+            'warnings': entry.get('warnings') or [],
+            'keyDecisions': entry.get('keyDecisions') or [],
+            'updatedAt': entry.get('updatedAt', ''),
+            'path': entry.get('path', ''),
+            'excerpt': _safe_excerpt(entry.get('content', ''), 400),
+        } for entry in limited],
     }
 
 
@@ -2330,6 +3148,43 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({'ok': False, 'error': 'task_id required'}, 400)
             else:
                 self.send_json(get_scheduler_state(task_id))
+        elif p.startswith('/api/task-autopsy/'):
+            task_id = p.replace('/api/task-autopsy/', '')
+            if not task_id or not _SAFE_NAME_RE.match(task_id):
+                self.send_json({'ok': False, 'error': 'invalid task_id'}, 400)
+            else:
+                self.send_json(get_task_autopsy(task_id))
+        elif p.startswith('/api/task-command-panel/'):
+            task_id = p.replace('/api/task-command-panel/', '')
+            if not task_id or not _SAFE_NAME_RE.match(task_id):
+                self.send_json({'ok': False, 'error': 'invalid task_id'}, 400)
+            else:
+                self.send_json(get_command_panel(task_id))
+        elif p == '/api/timeout-summary':
+            q = urlparse(self.path).query
+            m = re.search(r'(?:^|&)limit=(\d+)', q or '')
+            limit = int(m.group(1)) if m else 8
+            self.send_json(get_timeout_summary(limit=limit))
+        elif p == '/api/approval-panel':
+            self.send_json(get_approval_panel())
+        elif p == '/api/jidipu-panel':
+            q = urlparse(self.path).query
+            m_limit = re.search(r'(?:^|&)limit=(\d+)', q or '')
+            limit = int(m_limit.group(1)) if m_limit else 12
+            self.send_json(get_jidipu_panel(limit=limit))
+        elif p == '/api/guoshiguan-panel':
+            q = urlparse(self.path).query
+            m_limit = re.search(r'(?:^|&)limit=(\d+)', q or '')
+            m_query = re.search(r'(?:^|&)q=([^&]+)', q or '')
+            limit = int(m_limit.group(1)) if m_limit else 12
+            query = ''
+            if m_query:
+                try:
+                    from urllib.parse import unquote_plus
+                    query = unquote_plus(m_query.group(1))
+                except Exception:
+                    query = m_query.group(1)
+            self.send_json(get_guoshiguan_panel(query=query, limit=limit))
         elif p == '/api/agents-status':
             self.send_json(get_agents_status())
         elif p.startswith('/api/task-output/'):
@@ -2739,6 +3594,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({'ok': False, 'error': 'sessionId required'}, 400)
                 return
             self.send_json(cd_conclude(sid))
+
+        elif p == '/api/court-discuss/adopt':
+            sid = body.get('sessionId', '').strip()
+            if not sid:
+                self.send_json({'ok': False, 'error': 'sessionId required'}, 400)
+                return
+            self.send_json(adopt_court_conclusion(sid, body.get('apply') or {}, body.get('taskId', '').strip()))
 
         elif p == '/api/court-discuss/destroy':
             sid = body.get('sessionId', '').strip()

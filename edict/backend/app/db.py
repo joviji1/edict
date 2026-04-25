@@ -1,5 +1,6 @@
 """SQLAlchemy async 引擎与 session 管理。"""
 
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -10,14 +11,21 @@ from sqlalchemy.orm import DeclarativeBase
 from .config import get_settings
 
 settings = get_settings()
+_database_url = make_url(settings.database_url)
+_engine_kwargs = {
+    "echo": settings.debug,
+}
 
-engine = create_async_engine(
-    settings.database_url,
-    echo=settings.debug,
-    pool_size=10,
-    max_overflow=20,
-    pool_pre_ping=True,
-)
+if _database_url.get_backend_name() != "sqlite":
+    _engine_kwargs.update(
+        {
+            "pool_size": 10,
+            "max_overflow": 20,
+            "pool_pre_ping": True,
+        }
+    )
+
+engine = create_async_engine(settings.database_url, **_engine_kwargs)
 
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 

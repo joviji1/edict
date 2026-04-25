@@ -17,6 +17,8 @@
 import asyncio
 import logging
 import signal
+import subprocess
+import sys
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
@@ -74,6 +76,42 @@ class OrchestratorWorker:
         self.bus = EventBus()
         self._running = False
         self._stall_checker_task: asyncio.Task | None = None
+
+    @staticmethod
+    def _default_stall_reason(payload: dict) -> str:
+        return payload.get("stall_reason") or "no_heartbeat"
+
+    @staticmethod
+    def _append_flow_log(task, from_state: str | None, to_state: str, reason: str):
+        flow_entry = {
+            "from": from_state,
+            "to": to_state,
+            "agent": "orchestrator",
+            "reason": reason,
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
+        task.flow_log = [*(task.flow_log or []), flow_entry]
+
+    @staticmethod
+    def _merge_scheduler(task, **updates) -> dict:
+        scheduler = dict(task.scheduler or {})
+        scheduler.update({k: v for k, v in updates.items() if v is not None})
+        task.scheduler = scheduler
+        return scheduler
+
+    async def _load_task(self, session, task_id: str):
+        svc = TaskService(session)
+        return svc, await svc.get_task(task_id)
+
+    async def _run_autopsy(self, task_id: str, stall_reason: str):
+        cmd = [
+            sys.executable,
+            "scripts/kanban_update.py",
+            "autopsy",
+            task_id,
+            stall_reason,
+        ]
+        return subprocess.run(cmd, capture_output=True, text=True, cwd="/root/.openclaw/workspace/edict")
 
     async def start(self):
         """启动 worker 主循环。"""
@@ -241,6 +279,7 @@ class OrchestratorWorker:
         current_state = payload.get("state", "")
         stall_count = int(payload.get("stall_count", 0))
         escalation_level = int(payload.get("escalation_level", 0))
+        stall_reason = self._default_stall_reason(payload)
 
         log.warning(
             f"⏸️ Task {task_id} stalled! state={current_state} "
@@ -255,6 +294,21 @@ class OrchestratorWorker:
                 agent = ORG_AGENT_MAP.get(org, agent)
 
             if agent:
+                async with async_session() as session:
+                    _, task = await self._load_task(session, task_id)
+                    scheduler = self._merge_scheduler(
+                        task,
+                        retryCount=stall_count + 1,
+                        escalationLevel=escalation_level,
+                        stallReason=stall_reason,
+                        lastStalledState=current_state,
+                        lastDispatchAgent=agent,
+                        lastUpdated=payload.get("last_updated"),
+                    )
+                    self._append_flow_log(task, current_state, current_state, f"停滞重试：{stall_reason}")
+                    task.updated_at = datetime.now(timezone.utc)
+                    await session.commit()
+
                 log.info(f"🔄 Retrying task {task_id} → agent '{agent}' (attempt {stall_count + 1})")
                 await self.bus.publish(
                     topic=TOPIC_TASK_DISPATCH,
@@ -266,7 +320,7 @@ class OrchestratorWorker:
                         "agent": agent,
                         "state": current_state,
                         "message": f"任务停滞重试 (第{stall_count + 1}次)",
-                        "stall_count": stall_count + 1,
+                        "stall_count": scheduler.get("retryCount", stall_count + 1),
                     },
                 )
                 return
@@ -276,9 +330,28 @@ class OrchestratorWorker:
             escalate_to = _ESCALATION_PATH.get(current_state)
             if escalate_to:
                 escalate_agent = STATE_AGENT_MAP.get(escalate_to, "shangshu")
+                async with async_session() as session:
+                    _, task = await self._load_task(session, task_id)
+                    scheduler = self._merge_scheduler(
+                        task,
+                        retryCount=stall_count,
+                        escalationLevel=escalation_level + 1,
+                        stallReason=stall_reason,
+                        lastEscalatedFrom=current_state,
+                        lastEscalatedTo=escalate_to.value,
+                        lastDispatchAgent=escalate_agent,
+                        lastUpdated=payload.get("last_updated"),
+                    )
+                    task.state = escalate_to
+                    task.org = task.org_for_state(escalate_to, task.assignee_org)
+                    task.now = f"停滞升级：{current_state} → {escalate_to.value}"
+                    self._append_flow_log(task, current_state, escalate_to.value, f"停滞升级：{stall_reason}")
+                    task.updated_at = datetime.now(timezone.utc)
+                    await session.commit()
+
                 log.info(
                     f"⬆️ Escalating task {task_id}: {current_state} → {escalate_to.value} "
-                    f"(level {escalation_level + 1})"
+                    f"(level {scheduler.get('escalationLevel', escalation_level + 1)})"
                 )
                 await self.bus.publish(
                     topic=TOPIC_TASK_ESCALATED,
@@ -289,11 +362,10 @@ class OrchestratorWorker:
                         "task_id": task_id,
                         "from_state": current_state,
                         "to_state": escalate_to.value,
-                        "escalation_level": escalation_level + 1,
+                        "escalation_level": scheduler.get("escalationLevel", escalation_level + 1),
                         "reason": f"任务在 {current_state} 停滞，升级处理",
                     },
                 )
-                # 派发给上级 agent
                 await self.bus.publish(
                     topic=TOPIC_TASK_DISPATCH,
                     trace_id=trace_id,
@@ -304,7 +376,7 @@ class OrchestratorWorker:
                         "agent": escalate_agent,
                         "state": escalate_to.value,
                         "message": f"下级停滞，需上级介入 (从 {current_state} 升级)",
-                        "escalation_level": escalation_level + 1,
+                        "escalation_level": scheduler.get("escalationLevel", escalation_level + 1),
                     },
                 )
                 return
@@ -314,19 +386,31 @@ class OrchestratorWorker:
             f"🚨 Task {task_id} exhausted all recovery options! "
             f"Marking as Blocked. Manual intervention required."
         )
-        await self.bus.publish(
-            topic=TOPIC_TASK_STATUS,
-            trace_id=trace_id,
-            event_type="task.state.Blocked",
-            producer="orchestrator",
-            payload={
-                "task_id": task_id,
-                "from": current_state,
-                "to": TaskState.Blocked.value,
-                "reason": f"任务多次停滞（重试{MAX_STALL_RETRIES}次+升级{MAX_ESCALATION_LEVEL}级），需人工介入",
-                "assignee_org": payload.get("assignee_org", ""),
-            },
-        )
+        async with async_session() as session:
+            _, task = await self._load_task(session, task_id)
+            self._merge_scheduler(
+                task,
+                retryCount=stall_count,
+                escalationLevel=escalation_level,
+                stallReason=stall_reason,
+                lastStalledState=current_state,
+                lastUpdated=payload.get("last_updated"),
+            )
+            task.state = TaskState.Blocked
+            task.block = f"任务多次停滞，需人工介入：{stall_reason}"
+            task.now = task.block
+            self._append_flow_log(task, current_state, TaskState.Blocked.value, f"停滞阻塞：{stall_reason}")
+            task.updated_at = datetime.now(timezone.utc)
+            await session.commit()
+
+        autopsy_result = await self._run_autopsy(task_id, stall_reason)
+        if autopsy_result.returncode != 0:
+            log.error(
+                "Autopsy generation failed for task %s: stdout=%s stderr=%s",
+                task_id,
+                autopsy_result.stdout,
+                autopsy_result.stderr,
+            )
 
     # ── 停滞任务检测器 ──
 

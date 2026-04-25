@@ -72,14 +72,14 @@ python3 dashboard/server.py
 open http://127.0.0.1:7891
 ```
 
-> 💡 **看板开箱即用**：`server.py` 内嵌 `dashboard/dashboard.html`，Docker 镜像包含预构建 React 前端
+> 💡 **看板开箱即用**：`server.py` 直接提供 React 构建产物（`dashboard/dist/`）与 API；`dashboard/dashboard.html` 现主要作为历史源码/兼容文件保留，Docker 镜像已包含预构建前端
 
 ### 项目结构速览
 
 | 目录/文件 | 说明 | 改动频率 |
 |----------|------|--------|
-| `dashboard/dashboard.html` | 看板前端（单文件，零依赖，开箱即用） | 🔥 高 |
-| `dashboard/server.py` | API 服务器（stdlib，~2200 行） | 🔥 高 |
+| `edict/frontend/src/*` + `dashboard/dist/` | React 看板源码与构建产物（当前实际前端入口） | 🔥 高 |
+| `dashboard/server.py` | API + 静态文件服务器（Python 标准库，当前约 3600+ 行） | 🔥 高 |
 | `agents/*/SOUL.md` | 12 个 Agent 人格模板 | 🔶 中 |
 | `dashboard/court_discuss.py` | 朝堂议政引擎（多官员 LLM 讨论） | 🔶 中 |
 | `scripts/kanban_update.py` | 看板 CLI + 数据清洗 + 状态机校验（~350 行） | 🔶 中 |

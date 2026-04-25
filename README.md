@@ -14,8 +14,6 @@
   <a href="#-架构">🏛️ 架构</a> ·
   <a href="#-功能全景">📋 看板功能</a> ·
   <a href="docs/task-dispatch-architecture.md">📚 架构文档</a> ·
-  <a href="README_EN.md">English</a> ·
-  <a href="README_JA.md">日本語</a> ·
   <a href="CONTRIBUTING.md">参与贡献</a>
 </p>
 
@@ -32,6 +30,12 @@
 <p align="center">
   <img src="https://img.shields.io/badge/公众号-cft0808-07C160?style=for-the-badge&logo=wechat&logoColor=white" alt="WeChat">
 </p>
+
+---
+
+## 🌐 文档语言
+
+当前仓库默认仅维护中文主文档；英文/日文 README 已移除，避免多语种内容与当前实现长期漂移。
 
 ---
 
@@ -120,7 +124,7 @@ CrewAI 和 AutoGen 的 Agent 协作模式是 **"做完就交"**——没有人�
 - 每个 Agent 独立 Workspace · 独立 Skills · 独立模型
 - **旨意数据清洗** —— 标题/备注自动剥离文件路径、元数据、无效前缀
 
-### 📋 军机处看板（10 个功能面板）
+### 📋 军机处看板（12 个功能面板）
 
 <table>
 <tr><td width="50%">
@@ -133,6 +137,29 @@ CrewAI 和 AutoGen 的 Agent 协作模式是 **"做完就交"**——没有人�
 - 叫停 / 取消 / 恢复操作
 
 </td><td width="50%">
+
+**🛡️ 待批专面板 · Approval**
+- PendingConfirm 待批列表
+- 看板内直接准奏 / 封驳
+- 全量批示历史 + 风险键回溯
+- 审批通知与结果通知联动
+
+</td><td>
+
+**🚀 急递铺 · Dispatch Relay**
+- 聚合派发 / 通知 / 重试 / 升级 / 批示消息流
+- 从 flow_log、gate_checks、notifications 提炼事件摘要
+- 可直接跳转任务详情做回查
+
+</td></tr>
+<tr><td>
+
+**🏛️ 国史馆 · Archive**
+- 聚合 task_memory / 验尸 / shared_rule
+- 关键词搜索 + 来源筛选
+- 史料条目可联动打开任务详情
+
+</td><td>
 
 **🔭 省部调度 · Monitor**
 - 可视化各状态任务数量
@@ -161,6 +188,8 @@ CrewAI 和 AutoGen 的 Agent 协作模式是 **"做完就交"**——没有人�
 **👥 官员总览 · Officials**
 - Token 消耗排行榜
 - 活跃度 · 完成数 · 会话统计
+- 功绩排行详情面板
+- 轻量走势总览卡 + `🏅 能臣 / 🛠️ 需训练` 标签（真实样本不足时显示空态）
 
 </td><td>
 
@@ -217,35 +246,44 @@ CrewAI 和 AutoGen 的 Agent 协作模式是 **"做完就交"**——没有人�
 <details>
 <summary>📸 展开查看更多截图</summary>
 
+### 待批专面板
+![待批专面板](docs/screenshots/02-approval-panel.png)
+
+### 朝堂议政
+![朝堂议政](docs/screenshots/03-court-discussion.png)
+
 ### 省部调度
-![省部调度](docs/screenshots/02-monitor.png)
+![省部调度](docs/screenshots/04-monitor.png)
+
+### 急递铺 / 国史馆
+![急递铺 / 国史馆](docs/screenshots/05-relay-archive.png)
 
 ### 任务流转详情
-![任务流转详情](docs/screenshots/03-task-detail.png)
+![任务流转详情](docs/screenshots/06-task-detail.png)
 
 ### 模型配置
-![模型配置](docs/screenshots/04-model-config.png)
+![模型配置](docs/screenshots/07-model-config.png)
 
 ### 技能配置
-![技能配置](docs/screenshots/05-skills-config.png)
+![技能配置](docs/screenshots/08-skills-config.png)
 
 ### 官员总览
-![官员总览](docs/screenshots/06-official-overview.png)
+![官员总览](docs/screenshots/09-official-overview.png)
 
 ### 会话记录
-![会话记录](docs/screenshots/07-sessions.png)
+![会话记录](docs/screenshots/10-sessions.png)
 
 ### 奏折归档
-![奏折归档](docs/screenshots/08-memorials.png)
+![奏折归档](docs/screenshots/11-memorials.png)
 
 ### 圣旨模板
-![圣旨模板](docs/screenshots/09-templates.png)
+![圣旨模板](docs/screenshots/12-templates.png)
 
 ### 天下要闻
-![天下要闻](docs/screenshots/10-morning-briefing.png)
+![天下要闻](docs/screenshots/13-morning-briefing.png)
 
 ### 上朝仪式
-![上朝仪式](docs/screenshots/11-ceremony.png)
+![上朝仪式](docs/screenshots/14-ceremony.png)
 
 </details>
 
@@ -256,7 +294,7 @@ CrewAI 和 AutoGen 的 Agent 协作模式是 **"做完就交"**——没有人�
 ### Docker 一键启动
 
 ```bash
-docker run -p 7891:7891 cft0808/sansheng-demo
+docker run -p 7891:7891 cft0808/edict
 ```
 打开 http://localhost:7891 即可体验军机处看板。
 
@@ -270,7 +308,7 @@ exec /usr/local/bin/python3: exec format error
 
 这是因为镜像架构不匹配。请使用 `--platform` 参数：
 ```bash
-docker run --platform linux/amd64 -p 7891:7891 cft0808/sansheng-demo
+docker run --platform linux/amd64 -p 7891:7891 cft0808/edict
 ```
 
 或使用 docker-compose（已内置 `platform: linux/amd64`）：
@@ -341,7 +379,7 @@ bash edict.sh stop     # 停止
 
 </details>
 
-> 💡 **看板即开即用**：`server.py` 内嵌 `dashboard/dashboard.html`，Docker 镜像包含预构建的 React 前端
+> 💡 **看板即开即用**：`server.py` 直接提供 React 构建产物（`dashboard/dist/`）与 API；`dashboard/dashboard.html` 现主要作为历史源码/兼容文件保留，Docker 镜像包含预构建前端
 
 > 💡 详细教程请看 [Getting Started 指南](docs/getting-started.md)
 
@@ -446,11 +484,11 @@ edict/
 │   ├── libu_hr/                # 吏部 · 人事管理
 │   └── zaochao/SOUL.md         # 早朝官 · 情报枢纽
 ├── dashboard/
-│   ├── dashboard.html          # 军机处看板（单文件 · 零依赖 · ~2500 行）
+│   ├── dashboard.html          # 旧版单文件前端源码 / 兼容入口（当前运行态主要由 React dist 提供）
 │   ├── dist/                   # React 前端构建产物（Docker 镜像内包含，本地可选）
 │   ├── auth.py                 # Dashboard 登录鉴权
 │   ├── court_discuss.py        # 朝堂议政（多官员 LLM 讨论引擎）
-│   └── server.py               # API 服务器（Python 标准库 · 零依赖 · ~2300 行）
+│   └── server.py               # API + 静态文件服务器（Python 标准库 · 当前约 3600+ 行）
 ├── edict/backend/              # 异步后端服务（SQLAlchemy + Redis）
 │   ├── app/models/
 │   │   ├── task.py             # 任务模型 + 状态机
@@ -605,7 +643,7 @@ curl http://localhost:7891/api/remote-skills-list
 
 | 特点 | 说明 |
 |------|------|
-| **React 18 前端** | TypeScript + Vite + Zustand 状态管理，13 个功能组件 |
+| **React 18 前端** | TypeScript + Vite + Zustand 状态管理，12 个功能面板 + 4 个辅助交互组件（TaskModal / Toaster / CourtCeremony / ConfirmDialog） |
 | **纯 stdlib 后端** | `server.py` 基于 `http.server`，零依赖，同时提供 API + 静态文件服务 |
 | **EventBus 事件总线** | Redis Streams 发布/订阅，服务间解耦通信 |
 | **Outbox Relay** | 事务性 Outbox 模式，保障事件可靠投递（至少一次语义） |
@@ -695,7 +733,7 @@ curl -X POST http://127.0.0.1:7891/api/scheduler-scan \
 **解决**：
 ```bash
 # 方法 1：指定平台
-docker run --platform linux/amd64 -p 7891:7891 cft0808/sansheng-demo
+docker run --platform linux/amd64 -p 7891:7891 cft0808/edict
 
 # 方法 2：使用 docker-compose（已内置 platform）
 docker compose up
@@ -732,7 +770,7 @@ python3 scripts/skill_manager.py import-official-hub --agents zhongshu
 
 ### Phase 1 — 核心架构 ✅
 - [x] 十二部制 Agent 架构（太子 + 三省 + 七部 + 早朝官）+ 权限矩阵
-- [x] 军机处实时看板（10 个功能面板 + 实时活动面板）
+- [x] 军机处实时看板（12 个功能面板 + 实时活动面板）
 - [x] 任务叫停 / 取消 / 恢复
 - [x] 奏折系统（自动归档 + 五阶段时间线）
 - [x] 圣旨模板库（9 个预设 + 参数表单）
@@ -750,8 +788,8 @@ python3 scripts/skill_manager.py import-official-hub --agents zhongshu
 - [x] 前后端一体化部署（server.py 同时提供 API + 静态文件服务）
 
 ### Phase 2 — 制度深化 🚧
-- [ ] 御批模式（人工审批 + 一键准奏/封驳）
-- [x] 功过簿（Agent 绩效评分 + 模型推荐 + 成本优化）
+- [x] 御批模式（人工审批 + 一键准奏/封驳 + 待批提醒/审批结果通知）
+- [x] 功过簿（Agent 绩效评分 + 模型推荐 + 成本优化 + 轻量走势/标签总览）
 - [x] EventBus 事件总线（Redis Streams 解耦通信）
 - [x] Outbox Relay（事务性事件投递）
 - [x] 状态机审计（严格生命周期 + 审计日志）
@@ -759,11 +797,11 @@ python3 scripts/skill_manager.py import-official-hub --agents zhongshu
 - [x] DAG 编排器（任务分解 + 依赖解析）
 - [x] Dashboard 鉴权（登录认证）
 - [x] 一键启动 / systemd 生产部署
-- [ ] 急递铺（Agent 间实时消息流可视化）
-- [ ] 国史馆（知识库检索 + 引用溯源）
+- [x] 急递铺（最小消息流闭环：聚合派发 / 通知 / 重试 / 升级 / 批示摘要，支持任务回查）
+- [x] 国史馆（最小检索闭环：聚合 task_memory / 验尸 / shared_rule，支持搜索、来源筛选、任务联动）
 
 ### Phase 3 — 生态扩展
-- [ ] Docker Compose + Demo 镜像
+- [x] Docker Compose + Demo 镜像（仓库已提供 `docker-compose.yml`，镜像名统一为 `cft0808/edict`）
 - [ ] Notion / Linear 适配器
 - [ ] 年度大考（Agent 年度绩效报告）
 - [ ] 移动端适配 + PWA

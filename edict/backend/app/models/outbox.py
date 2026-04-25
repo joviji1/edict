@@ -11,8 +11,20 @@ from datetime import datetime, timezone
 
 from sqlalchemy import BigInteger, Boolean, Column, DateTime, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.types import JSON
 
 from ..db import Base
+
+
+@compiles(BigInteger, "sqlite")
+def _compile_bigint_sqlite(type_, compiler, **kw):
+    return "INTEGER"
+
+
+@compiles(JSONB, "sqlite")
+def _compile_jsonb_sqlite(type_, compiler, **kw):
+    return compiler.visit_JSON(JSON(), **kw)
 
 
 class OutboxEvent(Base):

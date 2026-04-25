@@ -2,13 +2,15 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { useStore, TAB_DEFS, startPolling, stopPolling, isEdict, isArchived } from './store';
 import EdictBoard from './components/EdictBoard';
 import MonitorPanel from './components/MonitorPanel';
-import OfficialPanel from './components/OfficialPanel';
 import ModelConfig from './components/ModelConfig';
 import SkillsConfig from './components/SkillsConfig';
 import SessionsPanel from './components/SessionsPanel';
 import MemorialPanel from './components/MemorialPanel';
 import TemplatePanel from './components/TemplatePanel';
 import MorningPanel from './components/MorningPanel';
+import RelayArchivePanel from './components/RelayArchivePanel';
+import ApprovalPanel from './components/ApprovalPanel';
+import OfficialPanel from './components/OfficialPanel';
 import TaskModal from './components/TaskModal';
 import Toaster from './components/Toaster';
 import CourtCeremony from './components/CourtCeremony';
@@ -134,8 +136,10 @@ export default function App() {
       </div>
 
       {activeTab === 'edicts' && <EdictBoard />}
+      {activeTab === 'approval' && <ApprovalPanel />}
       {activeTab === 'court' && <CourtDiscussion />}
       {activeTab === 'monitor' && <MonitorPanel />}
+      {activeTab === 'relay' && <RelayArchivePanel />}
       {activeTab === 'officials' && <OfficialPanel />}
       {activeTab === 'models' && <ModelConfig />}
       {activeTab === 'skills' && <SkillsConfig />}

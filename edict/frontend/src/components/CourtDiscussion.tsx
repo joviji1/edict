@@ -15,6 +15,9 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useStore, DEPTS } from '../store';
 import { api } from '../api';
 
+const MAX_OFFICIALS = DEPTS.length;
+const MIN_OFFICIALS = 2;
+
 // ── 常量 ──
 
 const OFFICIAL_COLORS: Record<string, string> = {
@@ -117,14 +120,14 @@ export default function CourtDiscussion() {
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
-      else if (next.size < 8) next.add(id);
+      else if (next.size < MAX_OFFICIALS) next.add(id);
       return next;
     });
   };
 
   // ── 开始议政 ──
   const handleStart = async () => {
-    if (!topic.trim() || selectedIds.size < 2 || loading) return;
+    if (!topic.trim() || selectedIds.size < MIN_OFFICIALS || loading) return;
     setLoading(true);
     try {
       const res = await api.courtDiscussStart(topic, Array.from(selectedIds));
@@ -331,7 +334,7 @@ export default function CourtDiscussion() {
         <div className="bg-[var(--panel)] rounded-xl p-4 border border-[var(--line)]">
           <div className="flex items-center gap-2 mb-3">
             <span className="text-sm font-semibold">👔 选择参朝官员</span>
-            <span className="text-xs text-[var(--muted)]">（{selectedIds.size}/8，至少2位）</span>
+            <span className="text-xs text-[var(--muted)]">（{selectedIds.size}/{MAX_OFFICIALS}，至少{MIN_OFFICIALS}位）</span>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
             {DEPTS.map((d) => {
@@ -416,16 +419,16 @@ export default function CourtDiscussion() {
         {/* 开始按钮 */}
         <button
           onClick={handleStart}
-          disabled={selectedIds.size < 2 || !topic.trim() || loading}
+          disabled={selectedIds.size < MIN_OFFICIALS || !topic.trim() || loading}
           className="w-full py-3 rounded-xl font-semibold text-sm transition-all border-0"
           style={{
             background:
-              selectedIds.size >= 2 && topic.trim()
+              selectedIds.size >= MIN_OFFICIALS && topic.trim()
                 ? 'linear-gradient(135deg, #6a9eff, #a07aff)'
                 : 'var(--panel2)',
-            color: selectedIds.size >= 2 && topic.trim() ? '#fff' : 'var(--muted)',
+            color: selectedIds.size >= MIN_OFFICIALS && topic.trim() ? '#fff' : 'var(--muted)',
             opacity: loading ? 0.6 : 1,
-            cursor: selectedIds.size >= 2 && topic.trim() && !loading ? 'pointer' : 'not-allowed',
+            cursor: selectedIds.size >= MIN_OFFICIALS && topic.trim() && !loading ? 'pointer' : 'not-allowed',
           }}
         >
           {loading ? '召集中...' : `🏛 开始朝议（${selectedIds.size}位上殿）`}

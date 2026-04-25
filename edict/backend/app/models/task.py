@@ -8,8 +8,15 @@ from typing import Any
 
 from sqlalchemy import Boolean, Column, DateTime, Enum, Index, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.types import JSON
 
 from ..db import Base
+
+
+@compiles(JSONB, "sqlite")
+def _compile_jsonb_sqlite(type_, compiler, **kw):
+    return compiler.visit_JSON(JSON(), **kw)
 
 
 class TaskState(str, enum.Enum):
@@ -154,6 +161,9 @@ class Task(Base):
         task_id = str(self.task_id) if self.task_id else ""
         updated_at = self.updated_at.isoformat() if self.updated_at else ""
         legacy_output = self.output or meta.get("output") or meta.get("legacy_output", "")
+        pending_confirm = meta.get("pending_confirm")
+        gate_checks = meta.get("gate_checks") or []
+        memory_extracted = meta.get("memory_extracted") or {}
 
         return {
             "task_id": task_id,
@@ -188,4 +198,10 @@ class Task(Base):
             "_scheduler": scheduler,
             "createdAt": self.created_at.isoformat() if self.created_at else "",
             "updatedAt": updated_at,
+            "pending_confirm": pending_confirm,
+            "pendingConfirm": pending_confirm,
+            "gate_checks": gate_checks,
+            "gateChecks": gate_checks,
+            "memory_extracted": memory_extracted,
+            "memoryExtracted": memory_extracted,
         }

@@ -271,6 +271,77 @@
     .sched-btn:hover{border-color:var(--acc);color:var(--text)}
     .sched-btn.warn:hover{border-color:#f5c842;color:#f5c842}
     .sched-btn.danger:hover{border-color:#ff5270;color:#ff5270}
+    .sched-btn.ok:hover{border-color:#2ecc8a;color:#2ecc8a}
+    .gate-box{margin-top:10px;background:rgba(124,92,252,.06);border:1px solid rgba(124,92,252,.24);border-radius:8px;padding:10px;font-size:11px;color:var(--muted)}
+    .gate-box.pending{border-color:rgba(245,200,66,.35);background:rgba(245,200,66,.06)}
+    .gate-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;color:#c4b5fd;font-weight:700}
+    .gate-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+    .gate-history{margin-top:8px;padding-top:8px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
+    .gate-entry{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px 10px;line-height:1.5}
+    .autopsy-box{margin-top:10px;background:rgba(255,82,112,.06);border:1px solid rgba(255,82,112,.22);border-radius:8px;padding:10px;font-size:11px;color:var(--muted)}
+    .autopsy-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;color:#ff8aa0;font-weight:700}
+    .autopsy-content{margin-top:8px;max-height:240px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px;color:var(--text);line-height:1.6}
+    .approval-wrap{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr);gap:14px}
+    .approval-card{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:14px}
+    .approval-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+    .approval-title{font-size:13px;font-weight:700;color:var(--text)}
+    .approval-sub{font-size:11px;color:var(--muted)}
+    .approval-kpis{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+    .approval-kpi{min-width:96px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+    .approval-kpi .k{font-size:10px;color:var(--muted);margin-bottom:3px}
+    .approval-kpi .v{font-size:16px;font-weight:800}
+    .approval-list{display:flex;flex-direction:column;gap:10px}
+    .approval-item{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px}
+    .approval-item.pending{border-color:#f5c84244;background:rgba(245,200,66,.05)}
+    .approval-item .top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:6px}
+    .approval-item .task{font-weight:800;color:var(--text);font-size:13px}
+    .approval-item .meta{font-size:11px;color:var(--muted);line-height:1.6}
+    .approval-item .ops{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+    .approval-item .hist{margin-top:8px;padding-top:8px;border-top:1px dashed var(--line);font-size:11px;color:var(--muted);line-height:1.6}
+    .approval-empty{font-size:12px;color:var(--muted);padding:16px 8px;text-align:center}
+    .approval-history{max-height:620px;overflow:auto;display:flex;flex-direction:column;gap:8px}
+    .approval-badge{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);border-radius:999px;padding:2px 8px;font-size:10px;color:var(--muted)}
+    .approval-badge.pending{border-color:#f5c84255;color:#f5c842}
+    .approval-badge.approved{border-color:#2ecc8a55;color:#2ecc8a}
+    .approval-badge.rejected{border-color:#ff527055;color:#ff5270}
+    @media (max-width: 1100px){.approval-wrap{grid-template-columns:1fr}}
+    .guoshi-wrap{display:flex;flex-direction:column;gap:14px}
+    .jidipu-wrap{display:flex;flex-direction:column;gap:14px}
+    .jidipu-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+    .jidipu-kpi{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px}
+    .jidipu-kpi .k{font-size:11px;color:var(--muted)}
+    .jidipu-kpi .v{font-size:20px;font-weight:800;color:var(--text);margin-top:6px}
+    .jidipu-list{display:flex;flex-direction:column;gap:8px}
+    .jidipu-item{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px}
+    .jidipu-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:6px}
+    .jidipu-meta{font-size:11px;color:var(--muted);line-height:1.6}
+    .jidipu-summary{font-size:12px;color:var(--text);line-height:1.6;margin-top:6px}
+    .jidipu-chip{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);border-radius:999px;padding:2px 8px;font-size:10px;color:var(--muted)}
+    .jidipu-chip.dispatch{border-color:#67e8f955;color:#67e8f9}
+    .jidipu-chip.notification{border-color:#facc1555;color:#facc15}
+    .jidipu-chip.retry{border-color:#fb923c55;color:#fb923c}
+    .jidipu-chip.escalation{border-color:#f8717155;color:#f87171}
+    .jidipu-chip.approval{border-color:#34d39955;color:#34d399}
+    .jidipu-empty{font-size:12px;color:var(--muted);padding:16px 8px;text-align:center}
+    .guoshi-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+    .guoshi-kpi{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px}
+    .guoshi-kpi .k{font-size:10px;color:var(--muted);margin-bottom:4px}
+    .guoshi-kpi .v{font-size:18px;font-weight:800;color:var(--text)}
+    .guoshi-highlight-list,.guoshi-item-list{display:flex;flex-direction:column;gap:10px}
+    .guoshi-highlight,.guoshi-item{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px}
+    .guoshi-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:8px}
+    .guoshi-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .guoshi-input{min-width:220px;max-width:320px;width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:12px;color:var(--text);outline:none}
+    .guoshi-filter-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+    .guoshi-filter-label{font-size:11px;color:var(--muted)}
+    .guoshi-title{font-size:13px;font-weight:800;color:var(--text)}
+    .guoshi-meta,.guoshi-summary,.guoshi-excerpt{font-size:11px;color:var(--muted);line-height:1.7}
+    .guoshi-summary{color:var(--text)}
+    .guoshi-tags,.guoshi-warnings,.guoshi-decisions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+    .guoshi-chip{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;padding:2px 8px;font-size:10px;color:var(--muted);background:var(--panel)}
+    .guoshi-chip.warn{border-color:#ff527055;color:#ff8aa0}
+    .guoshi-chip.source{border-color:#6a9eff55;color:var(--acc)}
+    .guoshi-empty{font-size:12px;color:var(--muted);padding:18px 8px;text-align:center;background:var(--panel2);border:1px dashed var(--line);border-radius:12px}
 
     /* card-level mini actions */
     .ec-actions{display:flex;gap:4px;margin-top:8px}
@@ -475,6 +546,18 @@
     .orl-score{font-size:11px;font-weight:700;color:var(--acc)}
     .orl-hbdot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
     .orl-hbdot.active{background:var(--ok)}.orl-hbdot.warn{background:var(--warn)}.orl-hbdot.stalled{background:var(--danger);animation:pulse 1.2s infinite}.orl-hbdot.idle{background:#2a3a5a}
+
+    .officials-summary-card{margin:12px 12px 8px;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--panel2)}
+    .officials-summary-head{font-size:11px;font-weight:700;color:var(--muted);margin-bottom:8px;letter-spacing:.06em;text-transform:uppercase}
+    .officials-summary-body{min-height:72px;display:flex;align-items:center;justify-content:center}
+    .officials-summary-meta{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4}
+    .officials-badge-row{display:flex;flex-wrap:wrap;gap:8px;padding:0 12px 12px}
+    .official-tag,.official-mini-tag{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:3px 8px;font-size:10px;font-weight:700}
+    .official-tag.star,.official-mini-tag.star{background:rgba(245,200,66,.16);color:#f5c842;border:1px solid rgba(245,200,66,.35)}
+    .official-tag.training,.official-mini-tag.training{background:rgba(255,107,107,.12);color:#ff8d8d;border:1px solid rgba(255,107,107,.25)}
+    .official-mini-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+    .officials-trend-svg{width:100%;height:72px}
+    .officials-trend-empty{font-size:12px;color:var(--muted)}
 
     /* right: detail */
     .off-detail{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;min-height:400px}
@@ -681,6 +764,9 @@
   <!-- TABS -->
   <div class="tabs">
     <div class="tab active" data-tab="edicts">📜 旨意看板 <span class="tbadge" id="tb-e">0</span></div>
+    <div class="tab" data-tab="approval">🛡️ 待批专面板 <span class="tbadge" id="tb-a">0</span></div>
+    <div class="tab" data-tab="jidipu">🚀 急递铺 <span class="tbadge" id="tb-j">0</span></div>
+    <div class="tab" data-tab="guoshiguan">🏛️ 国史馆 <span class="tbadge" id="tb-g">0</span></div>
     <div class="tab" data-tab="monitor">🔭 省部调度 <span class="tbadge" id="tb-m">0</span></div>
     <div class="tab" data-tab="officials">👥 官员总览</div>
     <div class="tab" data-tab="models">⚙️ 模型配置</div>
@@ -707,6 +793,61 @@
     </div>
     <div class="global-scan-detail" id="global-scan-detail"></div>
     <div id="edict-grid" class="edict-grid"></div>
+  </div>
+
+  <!-- ══ 待批专面板 ══ -->
+  <div class="panel" id="panel-approval">
+    <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px">
+      <div>
+        <div class="sec-title" style="margin-bottom:2px">🛡️ 待批专面板</div>
+        <div style="font-size:11px;color:var(--muted)">集中查看 PendingConfirm 待批项与全量批示历史，支持直接准奏/封驳</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span id="approval-panel-status" style="font-size:11px;color:var(--muted)">尚未加载</span>
+        <button class="ab-scan-detail" onclick="loadApprovalPanel()">🔄 刷新</button>
+      </div>
+    </div>
+    <div id="approval-panel-root"></div>
+  </div>
+
+  <!-- ══ 急递铺 ══ -->
+  <div class="panel" id="panel-jidipu">
+    <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px">
+      <div>
+        <div class="sec-title" style="margin-bottom:2px">🚀 急递铺</div>
+        <div style="font-size:11px;color:var(--muted)">聚合派发、审批、待批通知、重试与升级，先提供可见的消息流最小闭环</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span id="jidipu-panel-status" style="font-size:11px;color:var(--muted)">尚未加载</span>
+        <button class="ab-scan-detail" onclick="loadJidipuPanel()">🔄 刷新</button>
+      </div>
+    </div>
+    <div id="jidipu-panel-root"></div>
+  </div>
+
+  <!-- ══ 国史馆 ══ -->
+  <div class="panel" id="panel-guoshiguan">
+    <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px">
+      <div>
+        <div class="sec-title" style="margin-bottom:2px">🏛️ 国史馆</div>
+        <div style="font-size:11px;color:var(--muted)">聚合 task_memory、验尸报告、共享规则，先提供最小史料检索闭环</div>
+      </div>
+      <div class="guoshi-toolbar">
+        <input id="guoshiguan-query" class="guoshi-input" placeholder="搜索 taskId / 标题 / 标签 / 警告 / 决策 / 规则" onkeydown="if(event.key==='Enter')applyGuoshiguanSearch()">
+        <span id="guoshiguan-panel-status" style="font-size:11px;color:var(--muted)">尚未加载</span>
+        <button class="ab-scan-detail" onclick="applyGuoshiguanSearch()">🔎 搜索</button>
+        <button class="ab-scan-detail" onclick="clearGuoshiguanSearch()">清空</button>
+        <button class="ab-scan-detail" onclick="loadGuoshiguanPanel()">🔄 刷新</button>
+      </div>
+    </div>
+    <div class="guoshi-filter-row">
+      <span class="guoshi-filter-label">来源筛选：</span>
+      <button class="ab-btn active" data-gsource="all" onclick="setGuoshiguanSourceFilter('all')">全部</button>
+      <button class="ab-btn" data-gsource="task_memory" onclick="setGuoshiguanSourceFilter('task_memory')">task_memory</button>
+      <button class="ab-btn" data-gsource="autopsy" onclick="setGuoshiguanSourceFilter('autopsy')">验尸</button>
+      <button class="ab-btn" data-gsource="shared_rule" onclick="setGuoshiguanSourceFilter('shared_rule')">共享规则</button>
+    </div>
+    <div id="guoshiguan-panel-root"></div>
   </div>
 
   <!-- ══ 省部调度 ══ -->
@@ -891,6 +1032,11 @@
 /* ══ CONFIG ══ */
 const API = (location.origin === 'file://' ? 'http://127.0.0.1:7891' : location.origin) + '/api';
 let liveStatus=null, agentConfig=null, activeTab='edicts', countdown=5;
+let approvalPanelData = null;
+let jidipuPanelData = null;
+let guoshiguanPanelData = null;
+let guoshiguanQuery = '';
+let guoshiguanSourceFilter = 'all';
 let globalScanActions = [], globalScanDetailOpen = false;
 let globalScanCheckedAt = '', globalScanCount = 0;
 const GLOBAL_SCAN_STORAGE_KEY = 'openclaw_global_scan_state_v1';
@@ -1257,6 +1403,11 @@ function openTask(id){
   if(!liveStatus||!liveStatus.tasks)return;
   const t = liveStatus.tasks.find(x=>x.id===id);
   if(!t)return;
+  try{
+    const url = new URL(window.location.href);
+    url.searchParams.set('taskId', id);
+    history.replaceState(null, '', url.toString());
+  }catch(_e){}
   const stages = getPipeStatus(t);
   const activeStage = stages.find(s=>s.status==='active');
   const hb = t.heartbeat||{status:'unknown',label:'⚪ 无数据'};
@@ -1302,7 +1453,7 @@ function openTask(id){
       ${canStop ? `<button class="btn-action btn-stop" onclick="confirmAction('${esc(t.id)}','stop')">⏸ 叫停任务</button>
       <button class="btn-action btn-cancel" onclick="confirmAction('${esc(t.id)}','cancel')">🚫 取消任务</button>` : ''}
       ${canResume ? `<button class="btn-action btn-resume" onclick="taskAction('${esc(t.id)}','resume','恢复执行')">▶️ 恢复执行</button>` : ''}
-      ${['Review','Menxia'].includes(t.state) ? `<button class="btn-action" style="background:#2ecc8a22;color:#2ecc8a;border:1px solid #2ecc8a44" onclick="reviewAction('${esc(t.id)}','approve')">✅ 准奏</button>
+      ${['Review','Menxia','PendingConfirm'].includes(t.state) ? `<button class="btn-action" style="background:#2ecc8a22;color:#2ecc8a;border:1px solid #2ecc8a44" onclick="reviewAction('${esc(t.id)}','approve')">✅ 准奏</button>
       <button class="btn-action" style="background:#ff527022;color:#ff5270;border:1px solid #ff527044" onclick="reviewAction('${esc(t.id)}','reject')">🚫 封驳</button>` : ''}
       ${['Pending','Taizi','Zhongshu','Menxia','Assigned','Doing','Review','Next'].includes(t.state) ? `<button class="btn-action" style="background:#7c5cfc18;color:#7c5cfc;border:1px solid #7c5cfc44" onclick="advanceState('${esc(t.id)}','${esc(t.state)}')">⏩ 推进到下一步</button>` : ''}
     </div>
@@ -1324,8 +1475,11 @@ function openTask(id){
         <button class="sched-btn" onclick="schedulerAction('${esc(t.id)}','retry')">🔁 重试派发</button>
         <button class="sched-btn warn" onclick="schedulerAction('${esc(t.id)}','escalate')">📣 升级协调</button>
         <button class="sched-btn danger" onclick="schedulerAction('${esc(t.id)}','rollback')">↩️ 回滚稳定点</button>
+        <button class="sched-btn danger" onclick="schedulerAction('${esc(t.id)}','autopsy')">🧾 生成验尸</button>
         <button class="sched-btn" onclick="schedulerAction('${esc(t.id)}','scan')">🔍 立即扫描</button>
       </div>
+      <div class="gate-box" id="gate-box" style="display:none"></div>
+      <div class="autopsy-box" id="autopsy-box" style="display:none"></div>
     </div>
 
     <!-- Todo 子任务 -->
@@ -1433,6 +1587,11 @@ function openTask(id){
 function closeModal(e){
   if(e&&e.target!==document.getElementById('modal-bg')&&!e.target.classList.contains('modal-close'))return;
   document.getElementById('modal-bg').classList.remove('open');
+  try{
+    const url = new URL(window.location.href);
+    url.searchParams.delete('taskId');
+    history.replaceState(null, '', url.toString());
+  }catch(_e){}
   stopLiveActivity();
 }
 
@@ -1483,9 +1642,38 @@ async function fetchSchedulerState(taskId){
   try{
     const d = await fetchJ(API+`/scheduler-state/${encodeURIComponent(taskId)}`);
     renderSchedulerState(d);
+    fetchTaskAutopsy(taskId);
   }catch(e){
     statusEl.textContent='加载失败';
   }
+}
+
+async function fetchTaskAutopsy(taskId){
+  const box=document.getElementById('autopsy-box');
+  if(!box||!taskId) return;
+  try{
+    const d = await fetchJ(API+`/task-autopsy/${encodeURIComponent(taskId)}`);
+    renderTaskAutopsy(d);
+  }catch(e){}
+}
+
+function renderTaskAutopsy(data){
+  const box=document.getElementById('autopsy-box');
+  if(!box) return;
+  if(!data||!data.ok||!data.autopsy||!Object.keys(data.autopsy).length){
+    box.style.display='none';
+    box.innerHTML='';
+    return;
+  }
+  const a=data.autopsy||{};
+  box.style.display='block';
+  box.innerHTML=`
+    <div class="autopsy-head"><span>🧾 验尸记录</span><span>${esc((a.generatedAt||'').replace('T',' ').substring(0,19))}</span></div>
+    <div>根因分类：<b>${esc(a.reason||'未分类')}</b>${a.label?` · ${esc(a.label)}`:''}</div>
+    ${a.source?`<div style="margin-top:4px">来源：${esc(a.source)}</div>`:''}
+    ${a.path?`<div style="margin-top:4px">报告路径：<code>${esc(a.path)}</code></div>`:''}
+    ${data.content?`<div class="autopsy-content">${esc(data.content)}</div>`:''}
+  `;
 }
 
 function renderSchedulerState(data){
@@ -1521,6 +1709,53 @@ function renderSchedulerState(data){
   pieces.push(`自动回滚 ${s.autoRollback===false?'关闭':'开启'}`);
   if(s.lastDispatchAgent) pieces.push(`目标 ${esc(s.lastDispatchAgent)}`);
   line.innerHTML = pieces.map(x=>`<span>${x}</span>`).join('');
+  renderGateState(data);
+}
+
+function renderGateState(data){
+  const box=document.getElementById('gate-box');
+  if(!box) return;
+  const pending=data&&data.pendingConfirm?data.pendingConfirm:{};
+  const checks=Array.isArray(data&&data.gateChecks)?data.gateChecks:[];
+  const hasPending=pending&&Object.keys(pending).length>0;
+  if(!hasPending && !checks.length){
+    box.style.display='none';
+    box.classList.remove('pending');
+    box.innerHTML='';
+    return;
+  }
+  box.style.display='block';
+  box.classList.toggle('pending', hasPending);
+  const history = checks.slice(-5).reverse().map(g=>`<div class="gate-entry">
+      <div><b>${esc(g.gate||'gate')}</b> · ${esc(g.result||'unknown')}</div>
+      <div>${esc(g.from||'-')} → ${esc(g.to||'-')}${g.confirm_by?` · 确认方 ${esc(g.confirm_by)}`:''}</div>
+      ${g.at?`<div style="margin-top:2px;color:var(--muted)">${esc((g.at||'').replace('T',' ').substring(0,19))}</div>`:''}
+    </div>`).join('');
+  const riskText = pending.risk_key || pending.target_state || '-';
+  box.innerHTML = `
+    <div class="gate-head"><span>🛡 Gate / 高风险确认</span><span>${hasPending?'待处理':'已记录'}</span></div>
+    ${hasPending?`
+      <div>当前状态：<b>${esc(data.state||'')}</b>，请求流转：<b>${esc(riskText)}</b></div>
+      <div style="margin-top:4px">申请人：${esc(pending.requested_by||'-')} · 确认方：${esc(pending.confirm_by||'-')}</div>
+      <div style="margin-top:4px">申请时间：${esc((pending.requested_at||'').replace('T',' ').substring(0,19))}</div>
+      <div class="gate-actions">
+        <button class="sched-btn ok" onclick="taskConfirmAction('${esc(data.taskId)}','approve')">✅ 批准</button>
+        <button class="sched-btn danger" onclick="taskConfirmAction('${esc(data.taskId)}','reject')">❌ 驳回</button>
+      </div>
+    `:''}
+    ${history?`<div class="gate-history">${history}</div>`:''}
+  `;
+}
+
+async function taskConfirmAction(taskId, action){
+  const reason = prompt(`请输入${action==='approve'?'批准':'驳回'}原因（可留空）：`) || '';
+  try{
+    const r = await postJ(API+'/task-confirm', {taskId, action, reason});
+    if(r.ok){ toast(r.message||'确认成功','ok'); renderGateState(r); fetchSchedulerState(taskId); loadAll(); }
+    else{ toast(r.error||'确认失败','err'); }
+  }catch(e){
+    toast('服务器连接失败','err');
+  }
 }
 
 async function schedulerAction(taskId, action){
@@ -1531,6 +1766,16 @@ async function schedulerAction(taskId, action){
       if(r.ok){ toast(`🔍 扫描完成：${r.count||0} 个动作`,'ok'); }
       else{ toast(r.error||'扫描失败','err'); }
       fetchSchedulerState(taskId);
+      return;
+    }
+
+    if(action==='autopsy'){
+      const reason = prompt('请输入验尸原因/根因分类（可留空自动推断）：') || '';
+      const r = await postJ(API+'/task-autopsy', {taskId, reason});
+      if(r.ok){ toast(r.message||'验尸报告已生成','ok'); renderTaskAutopsy(r); }
+      else{ toast(r.error||'生成验尸失败','err'); }
+      fetchSchedulerState(taskId);
+      loadAll();
       return;
     }
 
@@ -1835,11 +2080,31 @@ function renderCL(log){
 
 /* ══ SKILLS ══ */
 function renderSkills(cfg){
+  const remoteSkills = Array.isArray(cfg&&cfg.remoteSkills) ? cfg.remoteSkills : [];
+  const remoteByAgent = remoteSkills.reduce((acc, item)=>{
+    const key = item&&item.agentId ? item.agentId : '';
+    if(!key) return acc;
+    (acc[key] ||= []).push(item);
+    return acc;
+  }, {});
   if(!cfg||!cfg.agents){document.getElementById('skills-grid').innerHTML='<div class="empty">无法加载</div>';return}
-  document.getElementById('skills-grid').innerHTML=cfg.agents.map(ag=>`
-    <div class="sk-card"><div class="sk-hdr"><span class="sk-emoji">${ag.emoji||'🏛️'}</span><span class="sk-name">${esc(ag.label)}</span><span class="sk-cnt">${(ag.skills||[]).length} 技能</span></div>
-    <div class="sk-list">${!(ag.skills||[]).length?'<div class="sk-empty">暂无 Skills</div>':(ag.skills||[]).map(sk=>`<div class="sk-item" onclick="openSkill('${esc(ag.id)}','${esc(sk.name)}')"><span class="si-name">📦 ${esc(sk.name)}</span><span class="si-desc">${esc(sk.description||'无描述')}</span><span class="si-arrow">›</span></div>`).join('')}</div>
-    <div class="sk-add" onclick="openAddSkillForm('${esc(ag.id)}','${esc(ag.label)}')">＋ 添加技能</div></div>`).join('')
+  document.getElementById('skills-grid').innerHTML=cfg.agents.map(ag=>{
+    const skills = Array.isArray(ag.skills) ? ag.skills : [];
+    const remoteForAgent = remoteByAgent[ag.id] || [];
+    const remoteNames = new Set(remoteForAgent.map(item=>item.skillName));
+    return `
+    <div class="sk-card"><div class="sk-hdr"><span class="sk-emoji">${ag.emoji||'🏛️'}</span><span class="sk-name">${esc(ag.label)}</span><span class="sk-cnt">${skills.length} 技能</span></div>
+    <div class="sk-list">${!skills.length?'<div class="sk-empty">暂无 Skills</div>':skills.map(sk=>{
+      const isRemote = remoteNames.has(sk.name);
+      return `<div class="sk-item" onclick="openSkill('${esc(ag.id)}','${esc(sk.name)}')"><span class="si-name">${isRemote?'🌐':'📦'} ${esc(sk.name)}</span><span class="si-desc">${esc(sk.description||'无描述')}${isRemote?' · 来源治理':''}</span><span class="si-arrow">›</span></div>`;
+    }).join('')}</div>
+    <div style="padding:0 14px 12px 14px">${remoteForAgent.length?`<div style="font-size:11px;color:var(--muted);padding:8px 0 10px 0;border-top:1px dashed var(--line)">🌐 远程治理 ${remoteForAgent.length} 项：${remoteForAgent.map(item=>`<span style="color:var(--acc)">${esc(item.skillName)}</span>`).join('、')}</div>`:'<div style="font-size:11px;color:var(--muted);padding:8px 0 10px 0;border-top:1px dashed var(--line)">暂无来源治理 skill</div>'}
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <div class="sk-add" style="flex:1 1 180px" onclick="openAddSkillForm('${esc(ag.id)}','${esc(ag.label)}')">＋ 添加本地技能</div>
+        <div class="sk-add" style="flex:1 1 180px" onclick="openAddRemoteSkillForm('${esc(ag.id)}','${esc(ag.label)}')">🌐 添加远程技能</div>
+      </div>
+    </div></div>`;
+  }).join('')
 }
 
 /* skill detail modal — 写入 modal-body (复用已有 modal) */
@@ -1847,20 +2112,37 @@ async function openSkill(agentId, skillName){
   document.getElementById('modal-body').innerHTML=`
     <div style="font-size:11px;color:var(--acc);font-weight:700;letter-spacing:.04em;margin-bottom:4px">${esc(agentId.toUpperCase())}</div>
     <div style="font-size:20px;font-weight:800;margin-bottom:16px">📦 ${esc(skillName)}</div>
-    <div id="sk-modal-content" class="sk-modal-body"><div style="color:var(--muted);font-size:12px;padding:24px;text-align:center">⟳ 加载中…</div></div>`;
+    <div id="***" class="***"><div style="color:var(--muted);font-size:12px;padding:24px;text-align:center">⟳ 加载中…</div></div>`;
   document.getElementById('modal-bg').classList.add('open');
   try{
-    const r = await fetchJ(API+'/skill-content/'+encodeURIComponent(agentId)+'/'+encodeURIComponent(skillName));
-    const el = document.getElementById('sk-modal-content');
+    const [r, remoteList] = await Promise.all([
+      fetchJ(API+'/skill-content/'+encodeURIComponent(agentId)+'/'+encodeURIComponent(skillName)),
+      fetchJ(API+'/remote-skills-list').catch(()=>({ok:false, remoteSkills:[]}))
+    ]);
+    const el = document.getElementById('***');
     if(!el) return;
     if(r.ok){
       const html = simpleMarkdown(r.content||'');
-      el.innerHTML = `<div class="sk-md">${html}</div><div class="sk-path">📂 ${esc(r.path||'')}</div>`;
+      const remoteSkills = Array.isArray(remoteList&&remoteList.remoteSkills) ? remoteList.remoteSkills : [];
+      const remoteInfo = remoteSkills.find(item=>item.agentId===agentId && item.skillName===skillName);
+      const remoteMeta = remoteInfo ? `
+        <div style="margin:0 0 14px 0;padding:12px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;font-size:12px;color:var(--muted);line-height:1.7">
+          <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:6px">🌐 远程来源治理</div>
+          <div>来源：<span style="color:var(--text)">${esc(remoteInfo.sourceUrl||'-')}</span></div>
+          <div>状态：<span style="color:${remoteInfo.status==='valid'?'#5bd68a':'#ffb84d'}">${esc(remoteInfo.status||'-')}</span></div>
+          <div>添加时间：${esc(remoteInfo.addedAt||'-')}</div>
+          <div>最近更新时间：${esc(remoteInfo.lastUpdated||'-')}</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">
+            <button class="btn" onclick="refreshRemoteSkill('${esc(agentId)}','${esc(skillName)}')">🔄 刷新远程版本</button>
+            <button class="btn btn-bad" onclick="removeRemoteSkill('${esc(agentId)}','${esc(skillName)}')">🗑️ 移除远程技能</button>
+          </div>
+        </div>` : '<div style="margin:0 0 14px 0;padding:12px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;font-size:12px;color:var(--muted);line-height:1.7">当前为本地 skill，未纳入远程来源治理。</div>';
+      el.innerHTML = `${remoteMeta}<div class="sk-md">${html}</div><div class="sk-path">📂 ${esc(r.path||'')}</div>`;
     } else {
       el.innerHTML = `<div style="color:#ff5270;font-size:13px;padding:16px">❌ ${esc(r.error||'无法读取')}</div>`;
     }
   }catch(e){
-    const el = document.getElementById('sk-modal-content');
+    const el = document.getElementById('***');
     if(el) el.innerHTML = `<div style="color:#ff5270;font-size:13px;padding:16px">❌ 服务器连接失败</div>`;
   }
 }
@@ -1897,6 +2179,98 @@ function simpleMarkdown(md){
   h = h.replace(/(<\/table>)<\/p>/g, '$1');
   h = h.replace(/<p>(<hr>)<\/p>/g, '$1');
   return h;
+}
+
+async function openAddRemoteSkillForm(agentId, agentLabel){
+  document.getElementById('modal-body').innerHTML=`
+    <div style="font-size:11px;color:var(--acc);font-weight:700;letter-spacing:.04em;margin-bottom:4px">为 ${esc(agentLabel)} 添加远程技能</div>
+    <div style="font-size:20px;font-weight:800;margin-bottom:18px">🌐 新增来源治理 Skill</div>
+    <div style="background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:18px;font-size:12px;line-height:1.7;color:var(--muted)">
+      <b style="color:var(--text)">🌐 远程技能说明</b><br>
+      • 仅对带 <code style="background:var(--bg);padding:2px 6px;border-radius:4px">.source.json</code> 的 skill 计入来源治理<br>
+      • 源地址支持 <b style="color:var(--text)">https://</b>、<b style="color:var(--text)">file://</b> 或服务器允许目录内的本地路径<br>
+      • 成功添加后会自动写入 <code style="background:var(--bg);padding:2px 6px;border-radius:4px">workspace-${esc(agentId)}/skills/{name}</code> 并触发 agent_config 同步
+    </div>
+    <form onsubmit="submitAddRemoteSkill(event,'${esc(agentId)}','${esc(agentLabel)}')" style="display:flex;flex-direction:column;gap:14px">
+      <div>
+        <label style="font-size:12px;font-weight:600;display:block;margin-bottom:6px">技能名称 <span style="color:#ff5270">*</span></label>
+        <input id="ars-name" type="text" required placeholder="如 elite-longterm-memory, weather"
+          pattern="[a-z0-9][a-z0-9\\-]*[a-z0-9]" title="小写英文+连字符，至少2个字符"
+          style="width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--line);border-radius:8px;color:var(--text);font-size:13px;outline:none"
+          oninput="this.value=this.value.toLowerCase().replace(/[^a-z0-9\\-]/g,'')">
+      </div>
+      <div>
+        <label style="font-size:12px;font-weight:600;display:block;margin-bottom:6px">来源地址 <span style="color:#ff5270">*</span></label>
+        <input id="ars-source" type="text" required placeholder="https://.../SKILL.md 或 /root/.openclaw/.../SKILL.md"
+          style="width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--line);border-radius:8px;color:var(--text);font-size:13px;outline:none">
+      </div>
+      <div>
+        <label style="font-size:12px;font-weight:600;display:block;margin-bottom:6px">描述 <span style="color:var(--muted);font-weight:400">(可选)</span></label>
+        <input id="ars-desc" type="text" placeholder="如：长期记忆、朝报天气、外部观察"
+          style="width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--line);border-radius:8px;color:var(--text);font-size:13px;outline:none">
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:4px">
+        <button type="button" class="btn btn-g" onclick="closeModal()" style="padding:8px 20px;font-size:13px">取消</button>
+        <button type="submit" id="ars-submit" class="btn" style="padding:8px 20px;font-size:13px;background:var(--acc);color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:600">🌐 添加远程技能</button>
+      </div>
+    </form>`;
+  document.getElementById('modal-bg').classList.add('open');
+  document.getElementById('ars-name').focus();
+}
+
+async function submitAddRemoteSkill(e, agentId, agentLabel){
+  e.preventDefault();
+  const name = document.getElementById('ars-name').value.trim();
+  const sourceUrl = document.getElementById('ars-source').value.trim();
+  const desc = document.getElementById('ars-desc').value.trim();
+  if(!name || !sourceUrl) return;
+  const btn = document.getElementById('ars-submit');
+  btn.disabled=true; btn.textContent='⟳ 添加中…';
+  try{
+    const r = await postJ(API+'/add-remote-skill', {agentId, skillName:name, sourceUrl, description:desc});
+    if(r.ok){
+      toast(`✅ 远程技能 ${name} 已添加到 ${agentLabel}`, 'ok');
+      closeModal();
+      await loadAgentConfig();
+    } else {
+      toast(r.error||'添加失败','err');
+      btn.disabled=false; btn.textContent='🌐 添加远程技能';
+    }
+  }catch(e){
+    toast('服务器连接失败','err');
+    btn.disabled=false; btn.textContent='🌐 添加远程技能';
+  }
+}
+
+async function refreshRemoteSkill(agentId, skillName){
+  try{
+    const r = await postJ(API+'/update-remote-skill', {agentId, skillName});
+    if(r.ok){
+      toast(`✅ 已刷新 ${skillName}`, 'ok');
+      await loadAgentConfig();
+      await openSkill(agentId, skillName);
+    } else {
+      toast(r.error||'刷新失败','err');
+    }
+  }catch(e){
+    toast('服务器连接失败','err');
+  }
+}
+
+async function removeRemoteSkill(agentId, skillName){
+  if(!confirm(`确定移除 ${agentId} 的远程技能 ${skillName}？`)) return;
+  try{
+    const r = await postJ(API+'/remove-remote-skill', {agentId, skillName});
+    if(r.ok){
+      toast(`✅ 已移除 ${skillName}`, 'ok');
+      closeModal();
+      await loadAgentConfig();
+    } else {
+      toast(r.error||'移除失败','err');
+    }
+  }catch(e){
+    toast('服务器连接失败','err');
+  }
 }
 
 /* ══ ADD SKILL FORM (规范化表单) ══ */
@@ -1972,6 +2346,8 @@ async function loadLive(){
     renderEdicts(tasks);
     renderMonitor(tasks);
     renderSessions(tasks);
+    renderApprovalPanelFromLive(tasks);
+    renderJidipuPanelFromLive(tasks);
   }catch(e){
     document.getElementById('chip-sync').textContent='❌ 服务器未启动';
     document.getElementById('chip-sync').className='chip err';
@@ -1979,7 +2355,12 @@ async function loadLive(){
 }
 async function loadAgentConfig(){
   try{
-    agentConfig=await fetchJ(API+'/agent-config');
+    const [cfg, remoteResp] = await Promise.all([
+      fetchJ(API+'/agent-config'),
+      fetchJ(API+'/remote-skills-list').catch(()=>({ok:false, remoteSkills:[]}))
+    ]);
+    agentConfig = cfg || {};
+    agentConfig.remoteSkills = Array.isArray(remoteResp&&remoteResp.remoteSkills) ? remoteResp.remoteSkills : [];
     renderModels(agentConfig);
     renderSkills(agentConfig);
     const log=await fetchJ(API+'/model-change-log').catch(()=>[]);
@@ -1991,10 +2372,318 @@ async function loadAgentConfig(){
 async function loadAll(){
   await loadLive();
   if(['models','skills'].includes(activeTab))await loadAgentConfig();
+  if(activeTab==='approval')await loadApprovalPanel();
+  if(activeTab==='jidipu')await loadJidipuPanel();
+  if(activeTab==='guoshiguan')await loadGuoshiguanPanel();
   if(activeTab==='sessions')renderSessions(liveStatus?liveStatus.tasks:[]);
   if(activeTab==='memorials')renderMemorials();
   if(activeTab==='templates')renderTemplates();
   if(activeTab==='morning' && !_newsPolling) loadMorning();
+}
+
+/* ══ APPROVAL PANEL / 待批专面板 ══ */
+function approvalStatusText(result){
+  return result==='approved'?'已准奏':result==='rejected'?'已封驳':'待处理';
+}
+function approvalBadgeClass(result){
+  return result==='approved'?'approved':result==='rejected'?'rejected':'pending';
+}
+function fmtPanelTime(ts){
+  return ts ? esc(String(ts).replace('T',' ').substring(0,19)) : '-';
+}
+function renderApprovalPanelFromLive(tasks){
+  const pending = (tasks||[]).filter(t=>t && t.state==='PendingConfirm');
+  const badge = document.getElementById('tb-a');
+  if(badge) badge.textContent = pending.length;
+  if(!approvalPanelData || !approvalPanelData.pending){
+    const st = document.getElementById('approval-panel-status');
+    if(st && activeTab!=='approval') st.textContent = pending.length ? `待批 ${pending.length} 项` : '当前无待批';
+  }
+}
+function renderJidipuPanelFromLive(tasks){
+  const badge = document.getElementById('tb-j');
+  const flowCount = (tasks||[]).reduce((acc,t)=>acc + (Array.isArray(t&&t.flow_log)?t.flow_log.length:0), 0);
+  if(badge && (!jidipuPanelData || !jidipuPanelData.stats)) badge.textContent = flowCount;
+  const st = document.getElementById('jidipu-panel-status');
+  if(st && activeTab!=='jidipu' && (!jidipuPanelData || !jidipuPanelData.stats)){
+    st.textContent = flowCount ? `已检测到 ${flowCount} 条流转记录` : '尚未检测到消息流';
+  }
+}
+function renderApprovalPanel(data){
+  approvalPanelData = data;
+  const root = document.getElementById('approval-panel-root');
+  const st = document.getElementById('approval-panel-status');
+  const badge = document.getElementById('tb-a');
+  if(!root) return;
+  if(!data || !data.ok){
+    if(st) st.textContent = data&&data.error ? data.error : '加载失败';
+    root.innerHTML = `<div class="approval-card"><div class="approval-empty">${esc((data&&data.error)||'待批面板加载失败')}</div></div>`;
+    if(badge) badge.textContent = 0;
+    return;
+  }
+  const pending = Array.isArray(data.pending) ? data.pending : [];
+  const history = Array.isArray(data.history) ? data.history : [];
+  const stats = data.stats || {};
+  if(badge) badge.textContent = Number(stats.pending ?? pending.length ?? 0);
+  if(st){
+    st.textContent = `最近刷新：${fmtPanelTime(data.checkedAt)} · 待批 ${pending.length} 项 · 历史 ${history.length} 条`;
+  }
+  const pendingHtml = pending.length ? pending.map(item=>{
+    const latest = item.latestPendingCheck || {};
+    const req = item.requestedAt || latest.at || '';
+    return `<div class="approval-item pending">
+      <div class="top">
+        <div>
+          <div class="task">${esc(item.taskId)} · ${esc(item.title||'')}</div>
+          <div class="meta">${esc(item.org||'-')} · 当前 ${esc(item.state||'-')} · 风险迁移 ${esc(item.riskKey || `${item.sourceState||'-'} → ${item.targetState||'-'}`)}</div>
+        </div>
+        <span class="approval-badge pending">待批</span>
+      </div>
+      <div class="meta">申请人：${esc(item.requestedBy||'-')} · 确认方：${esc(item.confirmBy||'-')} · 申请时间：${fmtPanelTime(req)}</div>
+      ${item.now ? `<div class="hist">当前说明：${esc(item.now)}</div>` : ''}
+      <div class="ops">
+        <button class="sched-btn ok" onclick="taskReviewAction('${esc(item.taskId)}','approve')">✅ 准奏</button>
+        <button class="sched-btn danger" onclick="taskReviewAction('${esc(item.taskId)}','reject')">❌ 封驳</button>
+        <button class="sched-btn" onclick="openTask('${esc(item.taskId)}')">🔎 查看任务</button>
+      </div>
+    </div>`;
+  }).join('') : '<div class="approval-empty">当前没有 PendingConfirm 待批任务。</div>';
+  const historyHtml = history.length ? history.map(item=>`<div class="approval-item">
+    <div class="top">
+      <div>
+        <div class="task">${esc(item.taskId)} · ${esc(item.title||'')}</div>
+        <div class="meta">${esc(item.org||'-')} · ${esc(item.from||'-')} → ${esc(item.to||'-')} · 确认方 ${esc(item.confirmBy||'-')}</div>
+      </div>
+      <span class="approval-badge ${approvalBadgeClass(item.result)}">${esc(approvalStatusText(item.result))}</span>
+    </div>
+    <div class="meta">批示时间：${fmtPanelTime(item.at)} · 风险键：${esc(item.riskKey||'-')} · 当前任务态：${esc(item.taskState||'-')}</div>
+  </div>`).join('') : '<div class="approval-empty">尚无历史批示记录。</div>';
+  root.innerHTML = `
+    <div class="approval-wrap">
+      <div class="approval-card">
+        <div class="approval-head">
+          <div>
+            <div class="approval-title">待批列表</div>
+            <div class="approval-sub">仅展示当前 PendingConfirm 的待批项</div>
+          </div>
+        </div>
+        <div class="approval-kpis">
+          <div class="approval-kpi"><div class="k">待批</div><div class="v">${Number(stats.pending ?? pending.length)}</div></div>
+          <div class="approval-kpi"><div class="k">已准奏</div><div class="v">${Number(stats.approved||0)}</div></div>
+          <div class="approval-kpi"><div class="k">已封驳</div><div class="v">${Number(stats.rejected||0)}</div></div>
+          <div class="approval-kpi"><div class="k">历史总数</div><div class="v">${Number(stats.totalHistory ?? history.length)}</div></div>
+        </div>
+        <div class="approval-list">${pendingHtml}</div>
+      </div>
+      <div class="approval-card">
+        <div class="approval-head">
+          <div>
+            <div class="approval-title">全量批示历史</div>
+            <div class="approval-sub">按时间倒序，保留 pending / approved / rejected 全记录</div>
+          </div>
+        </div>
+        <div class="approval-history">${historyHtml}</div>
+      </div>
+    </div>`;
+}
+async function loadApprovalPanel(){
+  const st = document.getElementById('approval-panel-status');
+  if(st) st.textContent = '加载中...';
+  try{
+    const data = await fetchJ(API+'/approval-panel');
+    renderApprovalPanel(data);
+  }catch(e){
+    renderApprovalPanel({ok:false, error:'待批面板请求失败'});
+  }
+}
+function jidipuBadgeClass(kind){
+  return `jidipu-chip ${esc(kind||'')}`;
+}
+function renderJidipuPanel(data){
+  jidipuPanelData = data;
+  const root = document.getElementById('jidipu-panel-root');
+  const st = document.getElementById('jidipu-panel-status');
+  const badge = document.getElementById('tb-j');
+  if(!root) return;
+  if(!data || !data.ok){
+    if(st) st.textContent = data&&data.error ? data.error : '加载失败';
+    root.innerHTML = `<div class="approval-card"><div class="jidipu-empty">${esc((data&&data.error)||'急递铺加载失败')}</div></div>`;
+    if(badge) badge.textContent = 0;
+    return;
+  }
+  const items = Array.isArray(data.items) ? data.items : [];
+  const stats = data.stats || {};
+  if(badge) badge.textContent = Number(stats.total || items.length || 0);
+  if(st) st.textContent = `最近刷新：${fmtPanelTime(data.checkedAt)} · 流转 ${Number(stats.total||0)} 条 · 派发 ${Number(stats.dispatches||0)} · 通知 ${Number(stats.notifications||0)} · 重试 ${Number(stats.retries||0)} · 升级 ${Number(stats.escalations||0)}`;
+  const itemsHtml = items.length ? items.map(item=>`<div class="jidipu-item">
+    <div class="jidipu-head">
+      <div>
+        <div class="guoshi-title">${esc(item.taskId||'-')} · ${esc(item.title||'')}</div>
+        <div class="jidipu-meta">${esc(item.from||'-')} → ${esc(item.to||'-')} · 当前 ${esc(item.state||'-')} · ${fmtPanelTime(item.at)}</div>
+      </div>
+      <span class="${jidipuBadgeClass(item.kind)}">${esc(item.kindLabel||item.kind||'-')}</span>
+    </div>
+    <div class="jidipu-summary">${esc(item.summary||'')}</div>
+    <div class="jidipu-meta" style="margin-top:8px">
+      <button class="sched-btn" onclick="openTask('${esc(item.taskId||'')}')">🔎 查看任务</button>
+    </div>
+  </div>`).join('') : '<div class="jidipu-empty">暂无可展示消息流。</div>';
+  root.innerHTML = `
+    <div class="jidipu-wrap">
+      <div class="jidipu-kpis">
+        <div class="jidipu-kpi"><div class="k">流转总数</div><div class="v">${Number(stats.total||0)}</div></div>
+        <div class="jidipu-kpi"><div class="k">派发</div><div class="v">${Number(stats.dispatches||0)}</div></div>
+        <div class="jidipu-kpi"><div class="k">通知</div><div class="v">${Number(stats.notifications||0)}</div></div>
+        <div class="jidipu-kpi"><div class="k">重试 / 升级</div><div class="v">${Number(stats.retries||0) + Number(stats.escalations||0)}</div></div>
+        <div class="jidipu-kpi"><div class="k">批示</div><div class="v">${Number(stats.approvals||0)}</div></div>
+      </div>
+      <div class="jidipu-list">${itemsHtml}</div>
+    </div>`;
+}
+async function loadJidipuPanel(){
+  const st = document.getElementById('jidipu-panel-status');
+  if(st) st.textContent = '加载中...';
+  try{
+    const data = await fetchJ(API+'/jidipu-panel?limit=12');
+    renderJidipuPanel(data);
+  }catch(e){
+    renderJidipuPanel({ok:false, error:'急递铺请求失败'});
+  }
+}
+function renderGuoshiguanPanel(data){
+  guoshiguanPanelData = data;
+  const root = document.getElementById('guoshiguan-panel-root');
+  const st = document.getElementById('guoshiguan-panel-status');
+  const badge = document.getElementById('tb-g');
+  const qInput = document.getElementById('guoshiguan-query');
+  if(qInput && qInput.value !== guoshiguanQuery) qInput.value = guoshiguanQuery;
+  if(!root) return;
+  if(!data || !data.ok){
+    if(st) st.textContent = data&&data.error ? data.error : '加载失败';
+    root.innerHTML = `<div class="guoshi-empty">${esc((data&&data.error)||'国史馆加载失败')}</div>`;
+    if(badge) badge.textContent = 0;
+    return;
+  }
+  const rawItems = Array.isArray(data.items) ? data.items : [];
+  const rawHighlights = Array.isArray(data.highlights) ? data.highlights : [];
+  const sourceFilter = guoshiguanSourceFilter || 'all';
+  const filterBySource = item => sourceFilter==='all' || (item && item.sourceType===sourceFilter);
+  const items = rawItems.filter(filterBySource);
+  const highlights = rawHighlights.filter(filterBySource);
+  const stats = data.stats || {};
+  if(badge) badge.textContent = Number(items.length || 0);
+  if(st){
+    const qText = guoshiguanQuery ? ` · 检索“${guoshiguanQuery}”` : '';
+    const srcText = sourceFilter!=='all' ? ` · 来源 ${sourceFilter}` : '';
+    st.textContent = `最近刷新：${fmtPanelTime(data.checkedAt)} · 史料 ${Number(stats.total||0)} 条 · 当前展示 ${items.length} 条${qText}${srcText}`;
+  }
+  document.querySelectorAll('[data-gsource]').forEach(btn=>btn.classList.toggle('active', btn.dataset.gsource===sourceFilter));
+  const highlightHtml = highlights.length ? highlights.map(item=>`<div class="guoshi-highlight">
+    <div class="guoshi-head">
+      <div>
+        <div class="guoshi-title">${esc(item.taskId||'-')} · ${esc(item.title||'')}</div>
+        <div class="guoshi-meta">${esc(item.sourceType||'-')} · ${fmtPanelTime(item.updatedAt)}</div>
+      </div>
+      <span class="guoshi-chip source">${esc(item.sourceType||'-')}</span>
+    </div>
+    <div class="guoshi-summary">${esc(item.summary||'')}</div>
+  </div>`).join('') : '<div class="guoshi-empty">当前筛选下暂无高亮史料。</div>';
+  const itemsHtml = items.length ? items.map(item=>{
+    const tags = Array.isArray(item.tags) ? item.tags : [];
+    const warnings = Array.isArray(item.warnings) ? item.warnings : [];
+    const decisions = Array.isArray(item.keyDecisions) ? item.keyDecisions : [];
+    const taskBtn = item.taskId && item.taskId.startsWith('TASK-') ? `<button class="sched-btn" style="margin-top:8px" onclick="openTask('${esc(item.taskId)}')">🔎 查看任务</button>` : '';
+    return `<div class="guoshi-item">
+      <div class="guoshi-head">
+        <div>
+          <div class="guoshi-title">${esc(item.taskId||'-')} · ${esc(item.title||'')}</div>
+          <div class="guoshi-meta">来源：${esc(item.sourceType||'-')} · 责任方：${esc(item.agentId||'-')} · 更新时间：${fmtPanelTime(item.updatedAt)}</div>
+        </div>
+        <span class="guoshi-chip source">${esc(item.sourceType||'-')}</span>
+      </div>
+      ${item.summary ? `<div class="guoshi-summary">${esc(item.summary)}</div>` : ''}
+      ${item.path ? `<div class="guoshi-meta" style="margin-top:6px">路径：<code>${esc(item.path)}</code></div>` : ''}
+      ${tags.length ? `<div class="guoshi-tags">${tags.map(tag=>`<span class="guoshi-chip">${esc(tag)}</span>`).join('')}</div>` : ''}
+      ${warnings.length ? `<div class="guoshi-warnings">${warnings.map(tag=>`<span class="guoshi-chip warn">⚠ ${esc(tag)}</span>`).join('')}</div>` : ''}
+      ${decisions.length ? `<div class="guoshi-decisions">${decisions.map(tag=>`<span class="guoshi-chip">决策：${esc(tag)}</span>`).join('')}</div>` : ''}
+      ${item.excerpt ? `<div class="guoshi-excerpt" style="margin-top:8px">摘录：${esc(item.excerpt)}</div>` : ''}
+      ${taskBtn}
+    </div>`;
+  }).join('') : '<div class="guoshi-empty">当前筛选下暂无可展示史料。</div>';
+  root.innerHTML = `
+    <div class="guoshi-wrap">
+      <div class="guoshi-kpis">
+        <div class="guoshi-kpi"><div class="k">史料总数</div><div class="v">${Number(stats.total||0)}</div></div>
+        <div class="guoshi-kpi"><div class="k">task_memory</div><div class="v">${Number(stats.taskMemory||0)}</div></div>
+        <div class="guoshi-kpi"><div class="k">验尸</div><div class="v">${Number(stats.autopsy||0)}</div></div>
+        <div class="guoshi-kpi"><div class="k">共享规则</div><div class="v">${Number(stats.sharedRules||0)}</div></div>
+      </div>
+      <div class="approval-wrap">
+        <div class="approval-card">
+          <div class="approval-head">
+            <div>
+              <div class="approval-title">高亮史料</div>
+              <div class="approval-sub">按最新更新时间展示前 5 条线索</div>
+            </div>
+          </div>
+          <div class="guoshi-highlight-list">${highlightHtml}</div>
+        </div>
+        <div class="approval-card">
+          <div class="approval-head">
+            <div>
+              <div class="approval-title">史料条目</div>
+              <div class="approval-sub">聚合 task_memory / autopsy / shared_rule</div>
+            </div>
+          </div>
+          <div class="guoshi-item-list">${itemsHtml}</div>
+        </div>
+      </div>
+    </div>`;
+}
+async function loadGuoshiguanPanel(){
+  const st = document.getElementById('guoshiguan-panel-status');
+  if(st) st.textContent = '加载中...';
+  try{
+    const q = guoshiguanQuery ? `&q=${encodeURIComponent(guoshiguanQuery)}` : '';
+    const data = await fetchJ(API+`/guoshiguan-panel?limit=12${q}`);
+    renderGuoshiguanPanel(data);
+  }catch(e){
+    renderGuoshiguanPanel({ok:false, error:'国史馆请求失败'});
+  }
+}
+function applyGuoshiguanSearch(){
+  const input = document.getElementById('guoshiguan-query');
+  guoshiguanQuery = input ? (input.value||'').trim() : '';
+  loadGuoshiguanPanel();
+}
+function clearGuoshiguanSearch(){
+  guoshiguanQuery = '';
+  const input = document.getElementById('guoshiguan-query');
+  if(input) input.value = '';
+  loadGuoshiguanPanel();
+}
+function setGuoshiguanSourceFilter(source){
+  guoshiguanSourceFilter = source || 'all';
+  if(guoshiguanPanelData && guoshiguanPanelData.ok) renderGuoshiguanPanel(guoshiguanPanelData);
+}
+async function taskReviewAction(taskId, action){
+  const labels = {approve:'准奏', reject:'封驳'};
+  const comment = prompt(`请输入${labels[action]}意见（可留空）：`);
+  if(comment === null) return;
+  try{
+    const r = await postJ(API+'/review-action', {taskId, action, comment: comment||''});
+    if(r.ok){
+      toast(`✅ ${taskId} 已${labels[action]}`,'ok');
+      await loadAll();
+      if(activeTab==='approval') await loadApprovalPanel();
+      const modalBg = document.getElementById('modal-bg');
+      if(modalBg && modalBg.classList.contains('open')) fetchSchedulerState(taskId);
+    } else {
+      toast(r.error||'操作失败','err');
+    }
+  }catch(e){
+    toast('服务器连接失败','err');
+  }
 }
 
 /* ══ SESSIONS / 小任务 ══ */
@@ -2507,15 +3196,29 @@ function renderOfficials(data){
     <div class="kpi"><div class="kpi-v ${(totals.cost_cny||0)>20?'warn':'green'}">¥${totals.cost_cny||0}</div><div class="kpi-l">累计费用（含缓存）</div></div>
     <div class="kpi"><div class="kpi-v" style="font-size:16px;padding-top:4px">${esc(data.top_official||'—')}</div><div class="kpi-l">功绩最高</div></div>`;
 
+  const meritTrendSvg = buildMeritTrendSvg(offs);
+  const starPerformer = offs.find(o=>o.tags&&o.tags.includes('能臣'));
+  const trainingNeed = offs.find(o=>o.tags&&o.tags.includes('需训练'));
+
   // 左侧排行榜
   document.getElementById('off-ranklist').innerHTML=`
-    <div class="orl-hdr">功绩排行</div>`
+    <div class="orl-hdr">功绩排行</div>
+    <div class="officials-summary-card">
+      <div class="officials-summary-head">走势总览</div>
+      <div class="officials-summary-body">${meritTrendSvg}</div>
+      <div class="officials-summary-meta">近 8 条任务功绩变化折线（按当前官员汇总）</div>
+    </div>
+    <div class="officials-badge-row">
+      <span class="official-tag star">🏅 能臣：${esc((starPerformer&&starPerformer.role)||'暂无')}</span>
+      <span class="official-tag training">🛠️ 需训练：${esc((trainingNeed&&trainingNeed.role)||'暂无')}</span>
+    </div>`
     +offs.map(o=>{
       const hb=o.heartbeat||{status:'idle'};
+      const tags = Array.isArray(o.tags) ? o.tags.map(tag=>`<span class="official-mini-tag ${tag==='能臣'?'star':'training'}">${esc(tag)}</span>`).join('') : '';
       return `<div class="orl-item${selectedOfficial===o.id?' selected':''}" onclick="selectOfficial('${o.id}',this)">
         <span class="orl-medal">${o.merit_rank<=3?MEDALS[o.merit_rank-1]:'#'+o.merit_rank}</span>
         <span class="orl-emoji">${o.emoji}</span>
-        <span class="orl-name"><div class="orl-role">${esc(o.role)}</div><div class="orl-org">${esc(o.label)}</div></span>
+        <span class="orl-name"><div class="orl-role">${esc(o.role)}</div><div class="orl-org">${esc(o.label)}</div>${tags?`<div class="official-mini-tags">${tags}</div>`:''}</span>
         <span class="orl-score">${o.merit_score}分</span>
         <span class="orl-hbdot ${hb.status}"></span>
       </div>`;
@@ -2523,6 +3226,28 @@ function renderOfficials(data){
 
   // 默认选中第一个
   if(!selectedOfficial && offs.length) selectOfficial(offs[0].id);
+}
+
+function buildMeritTrendSvg(offs){
+  const values = (offs||[]).flatMap(o=>Array.isArray(o.merit_history)?o.merit_history.map(item=>Number(item.score)||0):[]);
+  if(!values.length){
+    return '<div class="officials-trend-empty">暂无趋势样本</div>';
+  }
+  const width = 220;
+  const height = 72;
+  const pad = 8;
+  const min = Math.min(...values, 0);
+  const max = Math.max(...values, 1);
+  const span = Math.max(max - min, 1);
+  const step = values.length>1 ? (width - pad*2)/(values.length-1) : 0;
+  const points = values.map((v,idx)=>{
+    const x = pad + step*idx;
+    const y = height - pad - ((v - min)/span)*(height - pad*2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  return `<svg class="officials-trend-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
+    <polyline points="${points}" fill="none" stroke="#f5c842" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></polyline>
+  </svg>`;
 }
 
 function selectOfficial(id, el){
@@ -2815,6 +3540,8 @@ document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
   t.classList.add('active');activeTab=t.dataset.tab;
   document.getElementById('panel-'+activeTab).classList.add('active');
   if(['models','skills'].includes(activeTab))loadAgentConfig();
+  if(activeTab==='approval')loadApprovalPanel();
+  if(activeTab==='guoshiguan')loadGuoshiguanPanel();
   if(activeTab==='officials')loadOfficials();
   if(activeTab==='monitor')loadAgentsStatus();
   if(activeTab==='morning')loadMorning();
@@ -2834,7 +3561,7 @@ function startCd(){
 }
 
 /* ══ KEY ══ */
-document.addEventListener('keydown',e=>{if(e.key==='Escape')document.getElementById('modal-bg').classList.remove('open')});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal()});
 
 /* ══ COURT CEREMONY (上朝仪式感) ══ */
 function showCeremony(){
@@ -3294,7 +4021,14 @@ function openFeedback(){
 
 /* ══ INIT ══ */
 restoreGlobalScanState();
-loadAll().then(()=>showCeremony());
+loadAll().then(()=>{
+  showCeremony();
+  try{
+    const params = new URLSearchParams(window.location.search||'');
+    const taskId = params.get('taskId');
+    if(taskId) setTimeout(()=>openTask(taskId), 0);
+  }catch(_e){}
+});
 startCd();
 </script>
 </body>

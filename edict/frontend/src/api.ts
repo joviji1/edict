@@ -68,12 +68,22 @@ export const api = {
   morningBrief: () => fetchJ<MorningBrief>(`${API_BASE}/api/morning-brief`),
   morningConfig: () => fetchJ<SubConfig>(`${API_BASE}/api/morning-config`),
   agentsStatus: () => fetchJ<AgentsStatusData>(`${API_BASE}/api/agents-status`),
+  jidipuPanel: (limit = 18) =>
+    fetchJ<JidipuPanelData>(`${API_BASE}/api/jidipu-panel?limit=${encodeURIComponent(String(limit))}`),
+  guoshiguanPanel: (query = '', limit = 18) =>
+    fetchJ<GuoshiguanPanelData>(
+      `${API_BASE}/api/guoshiguan-panel?limit=${encodeURIComponent(String(limit))}&q=${encodeURIComponent(query)}`
+    ),
 
   // 任务实时动态
   taskActivity: (id: string) =>
     fetchJ<TaskActivityData>(`${API_BASE}/api/task-activity/${encodeURIComponent(id)}`),
   schedulerState: (id: string) =>
     fetchJ<SchedulerStateData>(`${API_BASE}/api/scheduler-state/${encodeURIComponent(id)}`),
+  taskCommandPanel: (id: string) =>
+    fetchJ<TaskCommandPanelData>(`${API_BASE}/api/task-command-panel/${encodeURIComponent(id)}`),
+  taskAutopsy: (id: string) =>
+    fetchJ<TaskAutopsyData>(`${API_BASE}/api/task-autopsy/${encodeURIComponent(id)}`),
 
   // 技能内容
   skillContent: (agentId: string, skillName: string) =>
@@ -265,6 +275,10 @@ export interface OfficialInfo {
   flow_participations: number;
   merit_score: number;
   merit_rank: number;
+  efficiency_score?: number;
+  composite_score?: number;
+  tags?: string[];
+  merit_history?: { task_id: string; score: number; state: string }[];
   last_active: string;
   heartbeat: Heartbeat;
   participated_edicts: { id: string; title: string; state: string }[];
@@ -399,13 +413,135 @@ export interface SchedulerInfo {
   lastDispatchAt?: string;
   lastDispatchAgent?: string;
   autoRollback?: boolean;
+  stallReason?: string;
+  lastEscalatedAt?: string;
+  snapshot?: Record<string, unknown>;
+}
+
+export interface GateCheckItem {
+  at?: string;
+  gate?: string;
+  from?: string;
+  to?: string;
+  confirm_by?: string;
+  risk_key?: string;
+  result?: string;
+  comment?: string;
 }
 
 export interface SchedulerStateData {
   ok: boolean;
   error?: string;
+  taskId?: string;
+  state?: string;
+  org?: string;
   scheduler?: SchedulerInfo;
   stalledSec?: number;
+  timeoutClass?: string;
+  checkedAt?: string;
+  pendingConfirm?: Record<string, unknown>;
+  gateChecks?: GateCheckItem[];
+}
+
+export interface TaskCommandItem {
+  action: 'retry' | 'escalate' | 'rollback' | 'autopsy' | 'scan' | string;
+  label: string;
+  enabled: boolean;
+  reason?: string;
+  api?: string;
+}
+
+export interface TaskCommandPanelData {
+  ok: boolean;
+  error?: string;
+  taskId?: string;
+  state?: string;
+  timeoutClass?: string;
+  commands?: TaskCommandItem[];
+  snapshot?: Record<string, unknown>;
+  checkedAt?: string;
+}
+
+export interface TaskAutopsyMeta {
+  path?: string;
+  reason?: string;
+  label?: string;
+  generatedAt?: string;
+  source?: string;
+}
+
+export interface TaskAutopsyData {
+  ok: boolean;
+  error?: string;
+  exists?: boolean;
+  taskId?: string;
+  autopsy?: TaskAutopsyMeta;
+  content?: string;
+}
+
+export interface JidipuPanelItem {
+  taskId: string;
+  title: string;
+  state: string;
+  at?: string;
+  from?: string;
+  to?: string;
+  summary?: string;
+  kind: 'dispatch' | 'notification' | 'retry' | 'escalation' | 'approval' | string;
+  kindLabel?: string;
+}
+
+export interface JidipuPanelData {
+  ok: boolean;
+  checkedAt?: string;
+  stats?: {
+    dispatches?: number;
+    notifications?: number;
+    retries?: number;
+    escalations?: number;
+    approvals?: number;
+    total?: number;
+  };
+  items?: JidipuPanelItem[];
+  error?: string;
+}
+
+export interface GuoshiguanPanelItem {
+  sourceType: 'task_memory' | 'autopsy' | 'shared_rule' | string;
+  taskId: string;
+  title: string;
+  summary?: string;
+  agentId?: string;
+  tags?: string[];
+  warnings?: string[];
+  keyDecisions?: string[];
+  updatedAt?: string;
+  path?: string;
+  excerpt?: string;
+}
+
+export interface GuoshiguanHighlight {
+  taskId: string;
+  sourceType: string;
+  title: string;
+  summary?: string;
+  updatedAt?: string;
+}
+
+export interface GuoshiguanPanelData {
+  ok: boolean;
+  checkedAt?: string;
+  query?: string;
+  stats?: {
+    total?: number;
+    shown?: number;
+    taskMemory?: number;
+    autopsy?: number;
+    sharedRules?: number;
+  };
+  highlights?: GuoshiguanHighlight[];
+  items?: GuoshiguanPanelItem[];
+  error?: string;
 }
 
 export interface SkillContentResult {

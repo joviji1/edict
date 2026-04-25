@@ -151,6 +151,96 @@ def test_todo(tmp_path):
         kb.TASKS_FILE = original
 
 
+def _patch_kb_paths(tmp_path):
+    """Point kanban_update data paths at a temp sandbox."""
+    original = {
+        'TASKS_FILE': kb.TASKS_FILE,
+        'MEMORY_DIR': kb.MEMORY_DIR,
+        'TASK_MEMORY_DIR': kb.TASK_MEMORY_DIR,
+        'SHARED_MEMORY_FILE': kb.SHARED_MEMORY_FILE,
+        'AUTOPSY_DIR': kb.AUTOPSY_DIR,
+    }
+    kb.TASKS_FILE = tmp_path / 'tasks_source.json'
+    kb.MEMORY_DIR = tmp_path / 'agent_memory'
+    kb.TASK_MEMORY_DIR = tmp_path / 'task_memory'
+    kb.SHARED_MEMORY_FILE = tmp_path / 'shared_memory.json'
+    kb.AUTOPSY_DIR = tmp_path / 'autopsy'
+    return original
+
+
+def _restore_kb_paths(original):
+    for key, value in original.items():
+        setattr(kb, key, value)
+
+
+def test_done_auto_extracts_memory(tmp_path, monkeypatch):
+    """cmd_done should automatically distill terminal experience into memory stores."""
+    monkeypatch.setenv('OPENCLAW_AGENT_ID', 'gongbu')
+    original = _patch_kb_paths(tmp_path)
+    kb.TASKS_FILE.write_text(json.dumps([
+        {
+            'id': 'T-MEM-DONE', 'title': '自动记忆完成任务测试', 'state': 'Doing',
+            'org': '工部', 'flow_log': [],
+            'progress_log': [{'agent': 'gongbu', 'text': '完成核心实现和回归验证'}],
+            'todos': [{'id': '1', 'title': '补自动记忆测试', 'status': 'completed'}],
+        }
+    ]), encoding='utf-8')
+    try:
+        kb.cmd_done('T-MEM-DONE', '/tmp/output.md', '功能已全部实现并通过验证')
+        tasks = json.loads(kb.TASKS_FILE.read_text(encoding='utf-8'))
+        task = tasks[0]
+        assert task['memory_extracted']['done']['agent'] == 'gongbu'
+
+        agent_mem = json.loads((kb.MEMORY_DIR / 'gongbu.json').read_text(encoding='utf-8'))
+        assert agent_mem['memories'][0]['source_task'] == 'T-MEM-DONE'
+        assert '功能已全部实现' in agent_mem['memories'][0]['content']
+
+        task_mem = json.loads((kb.TASK_MEMORY_DIR / 'T-MEM-DONE.json').read_text(encoding='utf-8'))
+        decisions = task_mem['context_chain'][0]['key_decisions']
+        assert any('验收结论' in d for d in decisions)
+    finally:
+        _restore_kb_paths(original)
+
+
+def test_block_auto_extracts_memory_once(tmp_path, monkeypatch):
+    """cmd_block should write recovery warning once and be idempotent."""
+    monkeypatch.setenv('OPENCLAW_AGENT_ID', 'xingbu')
+    original = _patch_kb_paths(tmp_path)
+    kb.TASKS_FILE.write_text(json.dumps([
+        {'id': 'T-MEM-BLOCK', 'title': '自动记忆阻塞任务测试', 'state': 'Doing', 'org': '刑部'}
+    ]), encoding='utf-8')
+    try:
+        kb.cmd_block('T-MEM-BLOCK', '等待外部 API 权限')
+        kb.cmd_block('T-MEM-BLOCK', '等待外部 API 权限')
+        task_mem = json.loads((kb.TASK_MEMORY_DIR / 'T-MEM-BLOCK.json').read_text(encoding='utf-8'))
+        assert len(task_mem['context_chain']) == 1
+        assert '等待外部 API 权限' in ','.join(task_mem['context_chain'][0]['warnings'])
+    finally:
+        _restore_kb_paths(original)
+
+
+def test_autopsy_auto_extracts_failure_memory(tmp_path, monkeypatch):
+    """cmd_autopsy should feed structured failure reason back into memory."""
+    monkeypatch.setenv('OPENCLAW_AGENT_ID', 'xingbu')
+    original = _patch_kb_paths(tmp_path)
+    kb.TASKS_FILE.write_text(json.dumps([
+        {
+            'id': 'T-MEM-AUTOPSY', 'title': '自动记忆验尸任务测试', 'state': 'Blocked',
+            'org': '刑部', 'block': 'provider timeout',
+            '_scheduler': {'stallReason': 'provider_timeout'},
+            'progress_log': [{'agent': 'xingbu', 'text': '模型调用超时'}],
+        }
+    ]), encoding='utf-8')
+    try:
+        kb.cmd_autopsy('T-MEM-AUTOPSY')
+        tasks = json.loads(kb.TASKS_FILE.read_text(encoding='utf-8'))
+        assert tasks[0]['memory_extracted']['autopsy']['agent'] == 'xingbu'
+        task_mem = json.loads((kb.TASK_MEMORY_DIR / 'T-MEM-AUTOPSY.json').read_text(encoding='utf-8'))
+        assert any('provider_timeout' in d for d in task_mem['context_chain'][0]['key_decisions'])
+    finally:
+        _restore_kb_paths(original)
+
+
 def test_progress_log_capped(tmp_path):
     """progress_log should not exceed MAX_PROGRESS_LOG entries."""
     tasks_file = tmp_path / 'tasks_source.json'
