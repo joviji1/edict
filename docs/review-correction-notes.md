@@ -235,3 +235,35 @@
 
 ### 已回写文件
 - `docs/review-correction-notes.md`
+
+
+## [2026-04-28 18:45] legacy 路由缺失已被 openapi 与现网实打双重坐实
+- 提出人：阿爪
+- 状态：open
+- 复核对象：backend legacy 路由现网可用性 / `scripts/run_backend_component.sh` / `current-progress-board.md` 第 3.1 节
+
+### 发现的问题
+- `scripts/run_backend_component.sh` 已明确说明 backend API 启动前会 `cd /root/.openclaw/workspace/edict/edict/backend`，随后执行 `python -m uvicorn app.main:app`。这意味着现网 `app.main:app` 实际对应的就是仓库内 `edict/backend/app/main.py` 这一套代码，不是别处的神秘模块。
+- 但现网 `http://127.0.0.1:18000/openapi.json` 中，`/api/tasks/by-legacy/{legacy_id}` 相关路由只出现了：`/{legacy_id}`、`/{legacy_id}/progress`、`/{legacy_id}/todos`、`/{legacy_id}/transition`，**没有** `/{legacy_id}/dispatch-target` 与 `/{legacy_id}/review-action`。
+- 进一步直接实打：
+  - `POST /api/tasks/by-legacy/JJC-SMOKE-404/dispatch-target` -> `404 {"detail":"Not Found"}`
+  - `POST /api/tasks/by-legacy/JJC-SMOKE-404/review-action` -> `404 {"detail":"Not Found"}`
+- 与此同时，仓库文件 `edict/backend/app/api/legacy.py` 明确写着这两条路由装饰器，说明当前异常已经不是“调用姿势不对”这么轻，而是 **现网已加载入口与当前仓库文件内容之间存在更硬的运行不一致**：可能是进程未吃到最新代码、加载了陈旧 `.pyc` / 旧镜像、或同目录下实际 import 链与我们阅读的文件版本不同。
+
+### 建议修正
+- 把 legacy `dispatch-target` / `review-action` 从“普通 smoke 未过”升级为 **现网路由缺失级别阻塞**。
+- 下一轮排查不要再泛泛说“核路由注册”，而要直接钉这三件事：
+  1. 现网进程启动时间与代码更新时间是否错位；
+  2. `edict/backend/app/api/legacy.py` 当前磁盘文件与进程实际加载字节码是否一致；
+  3. backend 服务最近一次重启后，是否仍残留旧 build / 旧缓存 / 旧 mount。
+- 在这三点没钉死前，不要继续把这两条能力计入 backend cutover 的“已有源码、待验证”项，而应记成“**源码存在但现网路由表缺项**”。
+
+### 影响口径
+- 需要改掉“legacy 两条路由只是现网 404、原因待查”的弱说法。
+- 状态词应收紧为“现网 openapi 已确认缺项，属于运行不一致阻塞”。
+
+### Hermes玄成 处理结果
+- 待处理
+
+### 已回写文件
+- `docs/review-correction-notes.md`
