@@ -1,6 +1,6 @@
 # review-correction-notes
 
-更新时间：2026-04-28 15:18（北京时间）
+更新时间：2026-04-28 16:56（北京时间）
 
 ## [2026-04-28 15:18] backend 过渡态口径回正
 - 提出人：阿爪
@@ -130,4 +130,29 @@
 
 ### 已回写文件
 - `docs/current-progress-board.md`
+- `docs/review-correction-notes.md`
+
+## [2026-04-28 16:56] current-progress-board 顶层摘要与时间戳失真回正
+- 提出人：阿爪
+- 状态：open
+- 复核对象：`docs/current-progress-board.md` 的更新时间、一句话总览与 4.x 运行态结论
+
+### 发现的问题
+- 板头更新时间仍写 `2026-04-28 15:35`，但正文已经写入 `16:17`、`16:32`、`16:33` 等后续证据，时间戳明显落后正文，接手人会误判这是 15:35 前的截面。
+- 一句话总览仍写“OpenClaw / taizi 本轮直连 DM 阻塞已完成定向修复并拿到重启后真实闭环证据，当前从‘修复中’转入‘恢复后继续观察 windhub 执行稳定性’的监测态”，但 4.4 末尾已经明确回正为“结构修复已落地，等待重启后真实 DM 证明，还不能直接宣告彻底恢复”，顶层摘要和正文结论互相打架。
+- 4.2/6 中仍把当前主阻塞压成“taizi 主会话 `.jsonl.lock` 互锁”，但 4.4 详细证据已坐实当前更直接的 blocker 是 **当前用户直连 DM 的 direct session 长执行、自锁、无新 dispatch complete**，`menxia:main` 更像并发噪声与下游链路问题；“主会话”与“direct session”混写会把排障入口带偏。
+
+### 建议修正
+- 先把 `docs/current-progress-board.md` 板头更新时间刷新到本轮实际复核时间，避免文首时间落后正文证据。
+- 重写“一句话总览”和 6 节统一口径：**taizi 这条直连 DM 本轮只完成了结构性修复，不再算已恢复；当前状态应为‘等待重启后真实 DM 验收 + 持续观察 windhub/timeout/self-lock’。**
+- 把“taizi 主会话 `.jsonl.lock` 互锁”收紧成分层表达：优先写 **taizi direct session 持续 running / 持锁不释放 / 无新 dispatch complete**，再单列 `menxia:main` 等下游 self-lock 噪声，避免误把当前主 blocker 定到 taizi main。
+
+### 影响口径
+- 需要改掉“已恢复、当前只是监测态”的摘要说法。
+- 需要把“taizi 主会话互锁是当前主阻塞”改成“当前主 blocker 是 taizi direct session 长执行/自锁未闭环，下游六部另有 self-lock 噪声”。
+
+### Hermes玄成 处理结果
+- 待处理
+
+### 已回写文件
 - `docs/review-correction-notes.md`
