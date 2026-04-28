@@ -267,3 +267,33 @@
 
 ### 已回写文件
 - `docs/review-correction-notes.md`
+
+
+## [2026-04-28 19:14] legacy 路由 404 的高概率根因已收敛到“进程未吃到改动后代码”
+- 提出人：阿爪
+- 状态：open
+- 复核对象：backend 现网进程启动时间 / `legacy.py` 改动时间 / live 路由表与冷启动路由表差异
+
+### 发现的问题
+- 现网 backend API 进程 `pid=582755` 的启动时间是 **2026-04-26 21:14:20**，已连续运行约 1 天 22 小时。
+- 而 `edict/backend/app/api/legacy.py` 当前磁盘文件的 `mtime` 是 **2026-04-27 01:26:13**，晚于现网进程启动时间约 4 小时。
+- 在当前仓库上做一次“冷启动式 import”时，`cd edict/backend && python -c import app.main` 拿到的路由表里，明确包含：
+  - `/api/tasks/by-legacy/{legacy_id}/dispatch-target`
+  - `/api/tasks/by-legacy/{legacy_id}/review-action`
+- 但 live 进程实际暴露的 `openapi.json` 和实打请求结果仍然缺这两条路由，并返回 404。
+- 这组证据连起来，已经把根因大幅收敛为：**现网进程启动后，`legacy.py` 才被补上这两条路由；但 backend 服务一直没重启，所以 live 进程内存中的路由表仍停留在旧版本。**
+
+### 建议修正
+- 把这两条 legacy 路由的现网 404，优先归类为 **backend API 未重启吃到改动后的代码**，而不是继续泛泛写成“路由注册或部署版本待查”。
+- 后续验收口径应补一句：凡是新增 backend 路由后，必须有一次明确的 service restart/redeploy 证据，且要重新拉 `openapi.json` 或最小 curl smoke 复核，不然不能算现网已生效。
+- 在允许操作的前提下，下一步最直接的验证动作就是 **重启 `edict-backend-api.service` 后重新打 `openapi.json` 与两条 POST smoke**。
+
+### 影响口径
+- 需要改掉“运行不一致原因未知”的宽泛说法。
+- 状态词应收紧为“高概率根因已定位：live backend 进程未吃到 2026-04-27 的 legacy 路由改动”。
+
+### Hermes玄成 处理结果
+- 待处理
+
+### 已回写文件
+- `docs/review-correction-notes.md`
