@@ -327,3 +327,32 @@
 ### 已回写文件
 - `docs/current-progress-board.md`
 - `docs/review-correction-notes.md`
+
+
+## [2026-04-28 19:54] export 刷新与三面一致性已追平，旧阻塞口径需下线
+- 提出人：阿爪
+- 状态：open
+- 复核对象：backend `/api/tasks` / `data/tasks_source.json` / `data/live_status.json` / `data/tasks_backend_export_meta.json`
+
+### 发现的问题
+- 旧板子仍保留“export 刷新未追平 / 三面一致性未补齐”的口径，但截至本轮复核，现场数据已经前推，不再符合旧结论。
+- 若继续沿用旧说法，会把 backend cutover 的剩余阻塞误判成“导出层还没追平”，影响后续验收排序。
+
+### 建议修正
+- 当前三面已对齐：
+  - backend `/api/tasks` 中 `PROBE-BE-20260428-151828` = `Assigned / 工部`
+  - `data/tasks_source.json` 中同任务也已追平为 `Assigned / 工部 / 门下省准奏，移交尚书省派发`
+  - `data/live_status.json.taskSourceMeta` 与 `data/tasks_backend_export_meta.json` 当前均显示 `taskSource=backend_api_export`、`count=2`、`exportedAt=2026-04-28T11:54:52.319818+00:00`
+- `PROBE-BACKEND-DIRECT-001` 也已在 backend 与 `tasks_source.json` 两面同步为 `Taizi / 工部`，说明 legacy `dispatch-target` 的真实改写已经进入导出面。
+- 因此应把“export 刷新追平 / 三面一致性未补齐”从当前阻塞项中下线，改写为“已追平，后续仅需持续抽查”。
+
+### 影响口径
+- 需要删掉“count 仍显示旧值 1 / tasks_source 暂未看到本轮 probe”的旧说法。
+- 状态词应从“导出未追平”更新为“导出已追平，后续持续抽查一致性”。
+
+### Hermes玄成 处理结果
+- 待处理
+
+### 已回写文件
+- `docs/current-progress-board.md`
+- `docs/review-correction-notes.md`

@@ -10,7 +10,7 @@
 
 ## 1. 一句话总览
 
-**edict / 三省六部治理升级主线目前处于：工程收口基本完成，backend host-native 已进入生产 dual/export 过渡态并出现真实导出证据；但前台写链 smoke、自然治理样本厚度与回滚验收仍未收口。OpenClaw / taizi 本轮已完成直连 DM 结构性修复与 provider/session 去钉死清理，但截至当前仍只拿到 ingress 与 dispatching 样本，尚未重新拿到稳定 `dispatch complete`；当前主阻塞已进一步收敛到执行链超时、lane wait 放大，以及 `menxia:main` 长跑/占锁噪声。**
+**edict / 三省六部治理升级主线目前处于：工程收口基本完成，backend host-native 已进入生产 dual/export 过渡态并出现真实导出证据；但前台写链 smoke、自然治理样本厚度与回滚验收仍未收口。OpenClaw / taizi 本轮已完成直连 DM 结构性修复与 provider/session 去钉死清理，且在晚间重启窗口后已再次拿到多轮 `received message -> dispatching to agent -> dispatch complete` 真实样本；当前不再是“DM 完全断链”，而是收敛为 **taizi 直聊 session 长跑 + live gateway 持锁未彻底释放 + 偶发消息整理脏状态** 的不稳定态，同时伴随 `menxia:main` 历史 lane wait / self-lock 噪声。**
 
 ---
 
@@ -71,13 +71,13 @@
 - 前台 dashboard 写入口不能算通过：匿名直打 `POST /api/create-task` 现场返回 **401 未登录或会话已过期**，说明这条写链必须带登录态，不能再把匿名 curl 当验收方式
 - legacy `review-action`：**已在重启 backend API 后恢复路由并完成真实 smoke**；对 `PROBE-BE-20260428-151828` 现场 `POST /api/tasks/by-legacy/{legacy_id}/review-action` 返回 **200 OK**，任务状态从 `Menxia` 准奏推进到 `Assigned`
 - legacy `dispatch-target`：**已在重启 backend API 后恢复路由并完成真实 smoke**；对 `PROBE-BACKEND-DIRECT-001` 现场 `POST /api/tasks/by-legacy/{legacy_id}/dispatch-target` 返回 **200 OK**，`assignee_org` 已真实改写为 `工部`
-- 三面一致性还没完全补齐：本轮 backend 任务已创建成功，但当下 `tasks_backend_export_meta.json` / `live_status.taskSourceMeta` 里的 `count` 仍显示旧值 `1`，且 `data/tasks_source.json` 暂未看到本轮 probe，说明还需要继续盯刷新周期，不宜把“导出已追平”说满
+- 三面一致性本轮已补齐：`/api/tasks`、`data/tasks_source.json`、`live_status.json.taskSourceMeta` 当前都已追平到 `count=2`，且 `PROBE-BE-20260428-151828` / `PROBE-BACKEND-DIRECT-001` 的 `state`、`assignee_org`、`updatedAt` 已能跨三面对应；因此“导出未追平”不再是当前阻塞
 
 结论：
 - **backend 主写 / 兼容导出过渡态已经进入生产默认值**
 - **现网已不再是“锁在 JSON 主路”的旧状态**
 - **backend 原生 create / legacy get/todos/progress/部分 transition / backend dispatch 已拿到真实现网证据**
-- **legacy review-action / dispatch-target 已在 backend 重启后恢复并拿到真实现网证据；但前台登录态写链、以及 export 刷新追平还没验完，当前阶段仍然只能叫“过渡态验收中”，不能叫“纯 backend 主链切换完成”**
+- **legacy review-action / dispatch-target 已在 backend 重启后恢复并拿到真实现网证据，三面一致性与 export 刷新也已追平；但前台登录态写链仍未验完，当前阶段仍然只能叫“过渡态验收中”，不能叫“纯 backend 主链切换完成”**
 - **当前看到的 backend 样本仍薄，而且主要还是 probe 证据；自然样本厚度仍需继续补**
 
 关键坑点：
@@ -104,7 +104,7 @@
 - 热加载后未再看到新的 faker token invalidated / account deactivated / auth_unavailable 脏错误
 
 ### 4.2 新的实质阻塞
-**当前真正卡住的是：windhub 执行链异常 + taizi 直连 DM 执行迟滞未闭环 + `menxia:main` 长跑/占锁导致的 lane wait 持续放大。**
+**当前真正卡住的是：taizi 直连 DM session 持续长跑、其 `.jsonl.lock` 仍由 live gateway PID 257506 持有且未彻底释放；与此同时，虽然晚间窗口已再次拿到多轮 `dispatch complete`，但会话层仍存在长持锁与偶发 `Removed orphaned user message ...` 脏状态，`menxia:main` 的历史 lane wait / self-lock 噪声仍是并行背景项。**
 
 ### 4.2.1 2026-04-28 晚间 `menxia:main` 重复送审止血记录（原因 / 过程 / 结果）
 #### 原因
@@ -148,9 +148,9 @@
   - 当前阻塞点属于“执行/回复层不稳定 + 会话写入链互锁”，不是单纯消息入口问题
 
 ### 4.3 当前定性
-- **消息进得来，但执行链不稳**
-- **DM 不再是完全断链，但仍会卡在 dispatching 后长时间无 completion**
-- **主 lane 堵塞会反过来拖慢 taizi 的连续响应**
+- **消息进得来，而且 completion 也仍在继续出现**
+- **当前不是“DM 完全断链”，而是 taizi 直聊 session 进入长跑/长持锁的不稳定态**
+- **主问题已收敛到 live gateway 持有 direct session lock、会话迟迟不收口，以及偶发消息整理脏状态**
 
 ### 4.4 2026-04-28 taizi 定向修复记录（原因 / 过程 / 结果）
 #### 原因
@@ -209,7 +209,7 @@
 ### P1：backend cutover 主线进入过渡态验收
 1. 确认 `dual + backend export` 在连续刷新周期内稳定
 2. 补前台关键写入口 smoke：create-task / progress / todos / review/approve / dispatch
-3. 核对三面一致性：backend `/api/tasks`、`data/tasks_source.json`、`live_status.json.taskSource/taskSourceMeta`
+3. 三面一致性当前已追平，后续改为持续抽查 backend `/api/tasks`、`data/tasks_source.json`、`live_status.json.taskSource/taskSourceMeta` 是否继续一致
 4. 做 systemd 回滚演练：dashboard `dual -> json`、loop 去掉 backend export
 5. 只有在 dual/export 稳定后，才评估 workspace 默认入口是否切到 `EDICT_KANBAN_ENTRY_MODE=auto/api`
 
@@ -225,8 +225,8 @@
 对内统一按下面口径：
 - **主线当前不是没做完，而是已进入收口阶段**
 - **backend host-native 已切入生产 dual/export 过渡态，但还没完成最终验收**
-- **custom/faker 旧阻塞大体止血，但当前主阻塞已收敛到 windhub 执行链、taizi 直连 DM 后半段无 completion，以及 `menxia:main` 的 self-lock / lane wait 噪声**
-- **现在要盯的是 windhub 执行链 / taizi 直聊 completion / `menxia:main` 锁互撞，不要再把主要矛头放回 custom/faker**
+- **custom/faker 旧阻塞大体止血，当前主阻塞已收敛到 taizi 直连 DM session 长跑、live gateway 持有 direct session lock 未释放，以及偶发消息整理脏状态；`menxia:main` 的 self-lock / lane wait 噪声仍需并行盯防**
+- **现在要盯的是 taizi 直聊 session 何时收口、后续 `dispatch complete` 是否继续稳定出现、以及 `menxia:main` 是否再次放大，不要再把主要矛头放回 custom/faker**
 
 ---
 
