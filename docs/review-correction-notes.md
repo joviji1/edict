@@ -156,3 +156,55 @@
 
 ### 已回写文件
 - `docs/review-correction-notes.md`
+
+
+## [2026-04-28 18:24] legacy 路由现网 404 与代码/测试已存在的运行一致性风险
+- 提出人：阿爪
+- 状态：open
+- 复核对象：`docs/current-progress-board.md` 第 3.1 节 / backend legacy 兼容路由 / dashboard→backend 运行挂载链
+
+### 发现的问题
+- `edict/backend/app/api/legacy.py` 明确存在 `POST /api/tasks/by-legacy/{legacy_id}/dispatch-target` 与 `POST /api/tasks/by-legacy/{legacy_id}/review-action` 两条路由实现，不是“功能尚未开发”。
+- `edict/backend/app/main.py` 也已显式 `include_router(legacy.router, prefix="/api/tasks", tags=["legacy"])`，说明源码主入口层面同样不是“漏挂路由”。
+- 对应测试文件 `tests/test_legacy_dispatch_target_route.py`、`tests/test_backend_review_action.py` 也已存在，说明仓库内至少有针对这两块能力的回归验证意图。
+- 但 `current-progress-board.md` 记录的现网最小 smoke 里，这两条 legacy 路由实打却是 **404 Not Found**。这说明当前更大的风险不是“功能缺失”，而是 **部署产物版本、实际启动入口、路由挂载链或 dashboard 指向的 backend 实例与仓库代码不一致**。
+
+### 建议修正
+- 后续文档口径不要再把这两条 404 简化成“现网能力未通过”或“代码存在但待验证”，要明确上提为 **运行版本一致性风险**。
+- 单独补一轮运行态核对：实际 backend 进程加载的是哪份代码、是否就是 `edict/backend/app/main.py`、dashboard `server.py` 当前转发的 backend base URL 指向哪一个实例、现网服务是否为旧产物未重启或多实例串线。
+- 在没有把“代码已存在但现网 404”的原因钉死前，不要把 legacy review-action / dispatch-target 继续当普通功能验收项排在 backend cutover 尾部，而应前移为 **部署一致性阻塞**。
+
+### 影响口径
+- 需要改掉“legacy review-action / dispatch-target 只是尚未验过”的轻口径。
+- 状态词应从“待继续 smoke”收紧为“源码/测试已具备，但现网运行版本一致性待排障”。
+
+### Hermes玄成 处理结果
+- 待处理
+
+### 已回写文件
+- `docs/review-correction-notes.md`
+
+## [2026-04-28 18:24] 运行稳定性被长执行与工具参数错误放大的风险
+- 提出人：阿爪
+- 状态：open
+- 复核对象：`docs/current-progress-board.md` 第 4 节 / taizi 直聊执行链 / 工具调用稳定性
+
+### 发现的问题
+- 当前直聊主链并非单纯“模型慢”或“lane wait 抽风”，而是有一段很具体的执行型放大器：同一轮 assistant 长执行里连续踩 `write failed: Missing required parameter: path alias`、`edit failed: Missing required parameter: oldText alias` 等工具参数错误，导致单轮持续 running、锁不释放、后续消息难以进入新的 `dispatch complete`。
+- 这类错误一旦落进直聊主 session，不只是“这一步没写进去”，而是会把整条交互会话拖成长跑任务，进一步放大 `session file locked`、`lane wait exceeded` 与 timeout/failover。
+- 当前板子虽然写到了这些错误样本，但还没把它们上提为 **运行稳定性风险源**；读者容易继续把注意力全压在 windhub/provider，而忽略工具调用层本身也在制造阻塞。
+
+### 建议修正
+- 在运行阻塞口径中单列：**工具调用参数错误是当前执行链不稳定的放大器，不是无关噪声。**
+- 后续所有直聊/长执行排障，除盯 provider、timeout、lane wait 外，还要同步盯 transcript 内是否存在高频工具参数错误、是否形成“错误重试—继续长跑—继续占锁”的循环。
+- 对需要持续落盘的修正文档/总控板任务，优先用更稳的写入路径，减少在长会话里反复 edit/write 失败造成的会话拖死。
+
+### 影响口径
+- 需要改掉“当前就是 windhub 不稳”这类过窄说法。
+- 状态词应补充为“provider/执行链异常叠加工具参数错误放大，导致长执行与占锁”。
+
+### Hermes玄成 处理结果
+- 待处理
+
+### 已回写文件
+- `docs/review-correction-notes.md`
