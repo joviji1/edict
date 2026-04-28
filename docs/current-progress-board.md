@@ -69,21 +69,21 @@
 
 本轮**真实未覆盖 / 未通过**：
 - 前台 dashboard 写入口不能算通过：匿名直打 `POST /api/create-task` 现场返回 **401 未登录或会话已过期**，说明这条写链必须带登录态，不能再把匿名 curl 当验收方式
-- legacy `review-action`：现场 `POST /api/tasks/by-legacy/{legacy_id}/review-action` 返回 **404 Not Found**，因此“门下省准奏 / 终审准奏”这段不能记成已真实验收通过
-- legacy `dispatch-target`：现场 `POST /api/tasks/by-legacy/{legacy_id}/dispatch-target` 返回 **404 Not Found**，因此“legacy 显式派部链路”不能记成已真实验收通过
+- legacy `review-action`：**已在重启 backend API 后恢复路由并完成真实 smoke**；对 `PROBE-BE-20260428-151828` 现场 `POST /api/tasks/by-legacy/{legacy_id}/review-action` 返回 **200 OK**，任务状态从 `Menxia` 准奏推进到 `Assigned`
+- legacy `dispatch-target`：**已在重启 backend API 后恢复路由并完成真实 smoke**；对 `PROBE-BACKEND-DIRECT-001` 现场 `POST /api/tasks/by-legacy/{legacy_id}/dispatch-target` 返回 **200 OK**，`assignee_org` 已真实改写为 `工部`
 - 三面一致性还没完全补齐：本轮 backend 任务已创建成功，但当下 `tasks_backend_export_meta.json` / `live_status.taskSourceMeta` 里的 `count` 仍显示旧值 `1`，且 `data/tasks_source.json` 暂未看到本轮 probe，说明还需要继续盯刷新周期，不宜把“导出已追平”说满
 
 结论：
 - **backend 主写 / 兼容导出过渡态已经进入生产默认值**
 - **现网已不再是“锁在 JSON 主路”的旧状态**
 - **backend 原生 create / legacy get/todos/progress/部分 transition / backend dispatch 已拿到真实现网证据**
-- **但 review-action、legacy dispatch-target、前台登录态写链、以及 export 刷新追平还没验完；当前阶段仍然只能叫“过渡态验收中”，不能叫“纯 backend 主链切换完成”**
+- **legacy review-action / dispatch-target 已在 backend 重启后恢复并拿到真实现网证据；但前台登录态写链、以及 export 刷新追平还没验完，当前阶段仍然只能叫“过渡态验收中”，不能叫“纯 backend 主链切换完成”**
 - **当前看到的 backend 样本仍薄，而且主要还是 probe 证据；自然样本厚度仍需继续补**
 
 关键坑点：
 - 不能再按 `Pending -> Taizi` 的老预期写 smoke，现网 backend create 后初始态已直接是 `Taizi`
 - 不能把匿名 dashboard POST 当成前台写链通过证据；这条链路有认证门槛
-- 不能把 `review-action` / `dispatch-target` 的代码存在当作现网路由可用；这轮实打返回的是 404，需要继续核对路由注册或部署版本是否对齐
+- 本轮已确认 `review-action` / `dispatch-target` 的前序 404 根因是 backend API 长时间未重启，未吃到 2026-04-27 的 legacy 路由改动；重启后 openapi 与真实 smoke 已恢复
 
 ### 3.2 自然治理样本仍偏薄
 - 能力已通过可逆 probe 与测试验证
@@ -105,6 +105,30 @@
 
 ### 4.2 新的实质阻塞
 **当前真正卡住的是：windhub 执行链异常 + taizi 直连 DM 执行迟滞未闭环 + `menxia:main` 长跑/占锁导致的 lane wait 持续放大。**
+
+### 4.2.1 2026-04-28 晚间 `menxia:main` 重复送审止血记录（原因 / 过程 / 结果）
+#### 原因
+- backend probe 任务 `cea48d95-fe4d-4f84-a655-4387f0cffec4`（`[probe][backend-acceptance] dual-export smoke PROBE-BE-20260428-151828`）在 `tasks_source.json` 主任务镜像中一直停留在 `state=Menxia`、`_scheduler={}` 的初始送审态。
+- 但 `tasks_governance_samples.json` 与 menxia 实际 transcript 已经多次给出正式结论：**❌ 封驳**，理由是“当前送审内容仅含任务ID与旨意，未附中书省方案正文；请补齐后再报”。
+- 旧版 dashboard guard 只看 `tasks_source.json` 主任务字段，没吸收 governance sample 里的 verdict，于是 `dispatch_for_state(..., 'Menxia')` / scheduler retry 会继续把同一审议请求反复送进 `agent:menxia:main`。
+- 直接后果是：`agent:menxia:main` 旧主会话 `12583d5f-bb7b-4457-8433-fe918e7359c2` 长时间 `status=running`，并在 `/tmp/openclaw/openclaw-2026-04-28.log` 中持续出现 `session file locked`、`lane wait exceeded` 与重复封驳回复。
+
+#### 过程
+- 已先给 `dashboard/server.py` 补第二刀 guard：`_task_has_menxia_verdict(task)` 不再只看 `tasks_source.json`，同时回读 `tasks_governance_samples.json`，识别 `结论：封驳 / 准奏 / 请补齐后再报 / 方案正文缺失` 等 marker。
+- 已补 focused test，验证“主任务无 verdict、仅 governance sample 有 verdict”时也会抑制 menxia 重投；`python3 -m pytest -q tests/test_server.py -k 'menxia_repeat_review or menxia_task_with_existing_verdict or sample_guard'` 通过（2 passed）。
+- 已重启 `edict-dashboard.service`，确认新 PID 生效，切换到新 guard 运行态。
+- 随后确认旧 `menxia` 锁文件已消失，但 `sessions.json` 里旧主会话仍残留 `status=running` 且 transcript 不再增长，判定为**假 running 残留**而非持续执行。
+- 已先备份 `/root/.openclaw/agents/menxia/sessions/` 关键现场到：`/root/.openclaw/backups/20260428-191831-menxia-main-rotate`
+- 已定向旋转 `agent:menxia:main`：
+  - 旧：`12583d5f-bb7b-4457-8433-fe918e7359c2`
+  - 新：`649f583a-4369-4ada-a9fa-9cc9b2315e60`
+- 已清空该主会话的脏运行态字段，并重启 `systemctl --user restart openclaw-gateway`，新 gateway PID 为 `257506`。
+
+#### 结果
+- **运行态止血已落地**：重启后新 `agent:menxia:main` transcript 文件 `649f583a-4369-4ada-a9fa-9cc9b2315e60.jsonl` 已创建，但 8 秒复查保持 `0` 字节、无 `.lock`、`updatedAt` 不再跳，说明没有立刻再次自锁。
+- **dashboard 重投源已切断**：旧 menxia 重复封驳的最后一条样本时间为北京时间 `19:04:08`；而 `edict-dashboard.service` 重启时间为 `19:04:14`。重启后到当前观测窗口，未再拿到新的 `cea48d95-fe4d-4f84-a655-4387f0cffec4 -> menxia` 重投证据。
+- **OpenClaw gateway 已切到新进程**：`openclaw-gateway.service` 当前 live PID 为 `257506`，启动时间北京时间 `19:19:07`。
+- **主任务镜像已补追平**：已在 live dashboard 载入新逻辑后，对 `cea48d95-fe4d-4f84-a655-4387f0cffec4` 触发一次 `manual-reality-sync` 级 guard 投影；当前 `data/tasks_source.json` 已同步写入：`now=门下省已封驳，等待中书省补正文后再报`、`block=门下省封驳：当前送审内容未附中书省方案正文，请补齐后再报`、`_scheduler.lastDispatchStatus=suppressed-repeat-review-guard`，并补了一条 `menxia-guard` progress_log 与 skip flow_log。至此，“运行态止血”与“主任务镜像追平”两层都已打通。
 
 最新现场结论：
 - Feishu P2P 入会漏处理问题当前不是主因；P2P 入站、received message、dispatching to agent、dispatch complete 已出现新闭环样本

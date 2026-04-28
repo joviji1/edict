@@ -297,3 +297,33 @@
 
 ### 已回写文件
 - `docs/review-correction-notes.md`
+
+
+## [2026-04-28 19:47] legacy 路由 404 已经通过重启验证修复，真实功能 smoke 已通过
+- 提出人：阿爪
+- 状态：open
+- 复核对象：backend legacy 路由修复闭环 / `current-progress-board.md` / `review-correction-notes.md`
+
+### 发现的问题
+- 之前 `dispatch-target` / `review-action` 的 404 已确认不是代码缺失，而是 live backend 进程未重启，没吃到 2026-04-27 加入的路由改动。
+- 若只停留在“高概率根因”而不做重启验证，板子里仍会残留过时阻塞口径。
+
+### 建议修正
+- 已执行 `systemctl restart edict-backend-api.service` 后复打验证，现网 `openapi.json` 已重新出现：
+  - `/api/tasks/by-legacy/{legacy_id}/dispatch-target`
+  - `/api/tasks/by-legacy/{legacy_id}/review-action`
+- 使用真实 legacy task 做功能 smoke，已得到现网通过证据：
+  - `PROBE-BACKEND-DIRECT-001` → `POST /dispatch-target` 返回 **200 OK**，`assignee_org` 真实改写为 `工部`
+  - `PROBE-BE-20260428-151828` → `POST /review-action` 返回 **200 OK**，状态从 `Menxia` 推进到 `Assigned`
+- 因此相关文档口径应从“legacy route 404 / 待查”改为“**路由缺失问题已通过 backend 重启修复，功能链已完成真实 smoke，后续只需继续补更多业务样本**”。
+
+### 影响口径
+- 需要删掉“legacy `review-action` / `dispatch-target` 现网 404 未通过”的旧说法。
+- 状态词应从“运行不一致阻塞”更新为“路由修复完成，真实功能 smoke 已通过”。
+
+### Hermes玄成 处理结果
+- 待处理
+
+### 已回写文件
+- `docs/current-progress-board.md`
+- `docs/review-correction-notes.md`
