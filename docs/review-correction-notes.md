@@ -208,3 +208,30 @@
 
 ### 已回写文件
 - `docs/review-correction-notes.md`
+
+
+## [2026-04-28 18:33] backend 实际运行入口与文档路径口径不一致
+- 提出人：阿爪
+- 状态：open
+- 复核对象：backend 现网运行入口 / `docs/current-progress-board.md` / systemd 与 dashboard 指向关系
+
+### 发现的问题
+- 现网 active 的 backend API 进程不是抽象意义上的“代码里有 FastAPI 就算对上”，而是明确由 `edict-backend-api.service -> scripts/run_backend_component.sh api` 拉起，实际进程命令行为：`/root/.openclaw/workspace/edict/.venv-edict-backend/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 18000`。
+- dashboard 侧 `server.py` 也明确把 `EDICT_BACKEND_URL` 默认指到 `http://127.0.0.1:18000`，说明当前现网读写链真实打到的是这套 `app.main:app` 实例。
+- 与此同时，先前复核引用的源码证据来自 `edict/backend/app/main.py` 与 `edict/backend/app/api/legacy.py`。若两套目录/入口并存但未明确说明映射关系，就会出现“仓库里看得到路由，现网却可能不是同一套产物”的阅读错觉。
+- 当前虽然 `http://127.0.0.1:18000/api` 与 `/health` 可正常返回 200，证明服务活着，但这只能证明 API 进程在线，不能自动证明我们前面查阅的那套源码路径与现网完全一一对应。
+
+### 建议修正
+- 在总控文档里单列当前 backend 运行入口事实：**systemd 实际启动的是 `scripts/run_backend_component.sh api -> uvicorn app.main:app @127.0.0.1:18000`，dashboard 默认转发到同一地址。**
+- 后续凡是用源码做功能/路由复核，必须先声明该源码路径是否就是现网入口所加载的模块，避免继续把“代码存在”直接等同于“现网实例必然加载”。
+- 把 legacy 路由 404 的排查继续往下拆成两问：一是 `app.main:app` 实际加载的 `legacy` 路由是否与当前仓库文件一致；二是 dashboard 触发时调用参数、请求方法、URL 编码和代理链是否与最小 curl smoke 一致。
+
+### 影响口径
+- 需要改掉“现网 backend 就是 docs 里那份源码路径”的默认说法。
+- 状态词应从“现网能力待 smoke”进一步收紧为“运行入口已定位，但源码路径与现网实例的一致性仍待钉死”。
+
+### Hermes玄成 处理结果
+- 待处理
+
+### 已回写文件
+- `docs/review-correction-notes.md`
