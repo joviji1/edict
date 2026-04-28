@@ -1,6 +1,6 @@
 # current progress board
 
-更新时间：2026-04-28 17:52（北京时间） / system `date`：2026-04-28 17:52:00 CST (+0800)
+更新时间：2026-04-28 20:48（北京时间） / system `date`：2026-04-28 20:48:00 CST (+0800)
 
 > 本文件用于把 `docs/closeout.md` 与 `docs/governance-upgrade-map.md` 的主线结论压成一份持续跟进板。
 > 目标不是重复全部长文，而是给阿爪/值守链一个**当前到哪了、卡在哪、下一步干什么**的统一入口。
@@ -10,7 +10,7 @@
 
 ## 1. 一句话总览
 
-**edict / 三省六部治理升级主线目前处于：工程收口基本完成，backend host-native 已进入生产 dual/export 过渡态并出现真实导出证据；但前台写链 smoke、自然治理样本厚度与回滚验收仍未收口。OpenClaw / taizi 本轮已完成直连 DM 结构性修复与 provider/session 去钉死清理，且在晚间重启窗口后已再次拿到多轮 `received message -> dispatching to agent -> dispatch complete` 真实样本；当前不再是“DM 完全断链”，而是收敛为 **taizi 直聊 session 长跑 + live gateway 持锁未彻底释放 + 偶发消息整理脏状态** 的不稳定态，同时伴随 `menxia:main` 历史 lane wait / self-lock 噪声。**
+**edict / 三省六部治理升级主线目前处于：工程收口基本完成，backend host-native 已进入生产 dual/export 过渡态并出现真实导出证据；但前台写链 smoke、自然治理样本厚度与回滚验收仍未收口。OpenClaw / taizi 本轮已完成直连 DM 结构性修复与 provider/session 去钉死清理，且在晚间重启窗口后已再次拿到多轮 `received message -> dispatching to agent -> dispatch complete` 真实样本；当前不再是“DM 完全断链”，而是收敛为 **taizi 直聊 session 长跑 + 偶发消息整理脏状态** 的不稳定态；`menxia:main` 为历史噪声项，而 `shangshu:main` 本轮已完成 dashboard 重入止血与定点 session recovery。**
 
 ---
 
@@ -68,7 +68,7 @@
 - 导出面证据仍在：`tasks_backend_export_meta.json` 存在，`live_status.json.taskSource=backend_api_export`
 
 本轮**真实未覆盖 / 未通过**：
-- 前台 dashboard 写入口不能算通过：匿名直打 `POST /api/create-task` 现场返回 **401 未登录或会话已过期**，说明这条写链必须带登录态，不能再把匿名 curl 当验收方式
+- 前台 dashboard 写入口已补到登录态真实 smoke：匿名直打 `POST /api/create-task` 仍会返回 **401 未登录或会话已过期**，但带有效 `edict_token` 后，`POST /api/auth/login`、`POST /api/create-task`、`POST /api/task-todos`、`POST /api/advance-state` 已拿到真实现网证据；其中新建任务 `JJC-20260428-001` 已成功创建，随后又通过真实 UUID `a38d3eab-415d-4e08-8109-e8f84ca7fce6` 完成 `Taizi -> Zhongshu` 推进
 - legacy `review-action`：**已在重启 backend API 后恢复路由并完成真实 smoke**；对 `PROBE-BE-20260428-151828` 现场 `POST /api/tasks/by-legacy/{legacy_id}/review-action` 返回 **200 OK**，任务状态从 `Menxia` 准奏推进到 `Assigned`
 - legacy `dispatch-target`：**已在重启 backend API 后恢复路由并完成真实 smoke**；对 `PROBE-BACKEND-DIRECT-001` 现场 `POST /api/tasks/by-legacy/{legacy_id}/dispatch-target` 返回 **200 OK**，`assignee_org` 已真实改写为 `工部`
 - 三面一致性本轮已补齐：`/api/tasks`、`data/tasks_source.json`、`live_status.json.taskSourceMeta` 当前都已追平到 `count=2`，且 `PROBE-BE-20260428-151828` / `PROBE-BACKEND-DIRECT-001` 的 `state`、`assignee_org`、`updatedAt` 已能跨三面对应；因此“导出未追平”不再是当前阻塞
@@ -77,12 +77,13 @@
 - **backend 主写 / 兼容导出过渡态已经进入生产默认值**
 - **现网已不再是“锁在 JSON 主路”的旧状态**
 - **backend 原生 create / legacy get/todos/progress/部分 transition / backend dispatch 已拿到真实现网证据**
-- **legacy review-action / dispatch-target 已在 backend 重启后恢复并拿到真实现网证据，三面一致性与 export 刷新也已追平；但前台登录态写链仍未验完，当前阶段仍然只能叫“过渡态验收中”，不能叫“纯 backend 主链切换完成”**
+- **legacy review-action / dispatch-target 已在 backend 重启后恢复并拿到真实现网证据，三面一致性与 export 刷新也已追平，前台登录态写链也已补到关键闭环；但仍缺前台 progress 入口口径澄清与更多自然业务样本，当前阶段仍然只能叫“过渡态验收中”，不能叫“纯 backend 主链切换完成”**
 - **当前看到的 backend 样本仍薄，而且主要还是 probe 证据；自然样本厚度仍需继续补**
 
 关键坑点：
 - 不能再按 `Pending -> Taizi` 的老预期写 smoke，现网 backend create 后初始态已直接是 `Taizi`
-- 不能把匿名 dashboard POST 当成前台写链通过证据；这条链路有认证门槛
+- 不能把匿名 dashboard POST 当成前台写链通过证据；这条链路有认证门槛，必须先登录拿 `edict_token`
+- 不能再把 `/api/task-progress` 当成前台写入口验收项；当前 dashboard 服务端并不存在这条接口，真实可写入口至少已确认 `create-task`、`task-todos`、`advance-state`，且其中后两类状态推进接口吃的是**真实 UUID**，不是 legacy id
 - 本轮已确认 `review-action` / `dispatch-target` 的前序 404 根因是 backend API 长时间未重启，未吃到 2026-04-27 的 legacy 路由改动；重启后 openapi 与真实 smoke 已恢复
 
 ### 3.2 自然治理样本仍偏薄
@@ -146,6 +147,32 @@
   - 旧的 custom/faker 问题大体已切走
   - **windhub 不稳仍在，但当前更硬的卡点已经包含 taizi 主会话 `.jsonl.lock` 竞争**
   - 当前阻塞点属于“执行/回复层不稳定 + 会话写入链互锁”，不是单纯消息入口问题
+
+### 4.2.2 2026-04-28 晚间 `shangshu:main` 重入止血 + 定点 recovery 记录（原因 / 过程 / 结果）
+#### 原因
+- `dashboard/server.py::dispatch_for_state()` 旧逻辑会把 `Assigned / Review` 任务直接 `openclaw agent --agent shangshu ...` 灌进共享 `agent:shangshu:main`。
+- 与 `taizi` 已有 main-session guard 不同，`shangshu` 原本没有同级保护；同时 scheduler retry 与 startup recovery 也会重复调用 `dispatch_for_state()`，导致共享主会话持续被重入。
+- 现场锁文件 `/root/.openclaw/agents/shangshu/sessions/74b36d4d-6a8c-4ab9-a9da-6f6fcbcb0c75.jsonl.lock` 明确由 live `openclaw-gateway` PID `257506` 持有，说明不是孤儿锁，而是 live gateway 自锁。
+
+#### 过程
+- 已先备份 `dashboard/server.py` 到 `/root/.hermes/backups/edict-dashboard/`。
+- 已在 `dispatch_for_state()` 中为 `shangshu` 补上与 `taizi` 同级的 `main-session guard`，让 dashboard 不再直接唤醒/派发 `shangshu main`。
+- 已在 `_startup_recover_queued_dispatches()` 中对 `queued -> shangshu` 增加 suppress，避免服务重启后二次把 queued 任务重新灌入 `shangshu main`。
+- 已重启 `edict-dashboard.service`，新 PID `1084297`，启动时间北京时间 `20:43:42`，确认运行态已吃到新代码。
+- 随后对 `agent:shangshu:main` 做定点 session recovery：
+  - 备份目录：`/root/.openclaw/backups/shangshu-main-recovery-20260428-204633/`
+  - 旧主会话：`74b36d4d-6a8c-4ab9-a9da-6f6fcbcb0c75`
+  - 新主会话：`12d72ced-5f3a-4bb9-8252-2f522d960dbd`
+- 已清空新主会话的 `status/modelProvider/model/contextTokens/systemPromptReport.*` 等脏运行态字段，并重启 `systemctl --user restart openclaw-gateway`。
+- gateway 重启后新 live PID 为 `1118485`，启动时间北京时间 `20:46:57`。
+
+#### 结果
+- **旧 `shangshu main` 锁已实际释放**：旧锁文件 `74b36d4d-6a8c-4ab9-a9da-6f6fcbcb0c75.jsonl.lock` 已不存在。
+- **新 `agent:shangshu:main` 映射已生效**：`sessions.json` 当前已指向 `12d72ced-5f3a-4bb9-8252-2f522d960dbd`。
+- **dashboard 侧重入源已被切断**：带认证 smoke 后，`cea48d95-fe4d-4f84-a655-4387f0cffec4` 的 `_scheduler.lastDispatchStatus` 已变为 `suppressed-main-session-guard`，`lastDispatchError=shangshu main 会话保护：dashboard 不再直接唤醒/派发 shangshu main`。
+- `journalctl -u edict-dashboard.service` 已出现多轮明确现场证据：`自动派发跳过: shangshu main 会话保护已生效，避免与 gateway 主会话重入冲突`。
+- **post-restart 新窗口未再看到旧 `shangshu` 锁 session id 复发**：`/tmp/openclaw/openclaw-2026-04-28.log` 在 `12:46:57Z` 之后未再出现旧 session id `74b36d4d-6a8c-4ab9-a9da-6f6fcbcb0c75`，也未再出现 `session:agent:shangshu:main` 的新 lock/failover 样本。
+- 当前新 `12d72ced-5f3a-4bb9-8252-2f522d960dbd.jsonl` 仍为 `0` 字节、无 `.lock`，说明 recovery 后没有立刻再次自锁。
 
 ### 4.3 当前定性
 - **消息进得来，而且 completion 也仍在继续出现**

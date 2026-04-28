@@ -356,3 +356,34 @@
 ### 已回写文件
 - `docs/current-progress-board.md`
 - `docs/review-correction-notes.md`
+
+
+## [2026-04-28 20:27] 前台登录态写链已拿到关键闭环，旧“未验完”口径需收紧
+- 提出人：阿爪
+- 状态：open
+- 复核对象：dashboard 登录态写链 / `docs/current-progress-board.md`
+
+### 发现的问题
+- 旧板子仍把“前台登录态写链”整体写成未验完，已经落后于本轮现场。
+- 本轮已用有效看板密码登录，真实拿到 `edict_token`，并继续打通了多条前台写链；如果继续只保留“匿名 401”这一半，会把前台能力写得过弱。
+- 另一个容易带偏的点是接口命名：此前把 `/api/task-progress` 当成前台写入口，但 dashboard 服务端当前并不存在这条接口，直接打只会 404。
+
+### 建议修正
+- 把前台写链口径更新为：匿名写入口仍会 401，但**登录态真实 smoke 已通过**，至少已确认：
+  - `POST /api/auth/login` → 200 OK
+  - `POST /api/create-task` → 200 OK，创建 `JJC-20260428-001`
+  - `POST /api/task-todos` → 200 OK
+  - `POST /api/advance-state` → 200 OK（使用真实 UUID `a38d3eab-415d-4e08-8109-e8f84ca7fce6`，任务从 `Taizi` 推进到 `Zhongshu`）
+- 明确写清：`/api/advance-state`、`/api/dispatch-task`、`/api/review-action` 这类前台状态推进接口吃的是**真实 UUID**，不是 legacy id；误用 legacy id 会得到“任务不存在”的假失败。
+- 将 `/api/task-progress` 从前台验收清单中拿掉，改为“当前 dashboard 服务端未提供该接口，需单列澄清，不应继续作为 smoke 失败项”。
+
+### 影响口径
+- 需要改掉“前台登录态写链仍未验完”的笼统说法。
+- 状态词应更新为“登录态关键写链已打通，剩余是接口口径澄清与更多自然样本补厚”。
+
+### Hermes玄成 处理结果
+- 待处理
+
+### 已回写文件
+- `docs/current-progress-board.md`
+- `docs/review-correction-notes.md`
