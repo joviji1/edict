@@ -1,6 +1,6 @@
 # current progress board
 
-更新时间：2026-04-28 20:48（北京时间） / system `date`：2026-04-28 20:48:00 CST (+0800)
+更新时间：2026-04-28 21:45（北京时间） / system `date`：2026-04-28 21:45:00 CST (+0800)
 
 > 本文件用于把 `docs/closeout.md` 与 `docs/governance-upgrade-map.md` 的主线结论压成一份持续跟进板。
 > 目标不是重复全部长文，而是给阿爪/值守链一个**当前到哪了、卡在哪、下一步干什么**的统一入口。
@@ -68,7 +68,7 @@
 - 导出面证据仍在：`tasks_backend_export_meta.json` 存在，`live_status.json.taskSource=backend_api_export`
 
 本轮**真实未覆盖 / 未通过**：
-- 前台 dashboard 写入口已补到登录态真实 smoke：匿名直打 `POST /api/create-task` 仍会返回 **401 未登录或会话已过期**，但带有效 `edict_token` 后，`POST /api/auth/login`、`POST /api/create-task`、`POST /api/task-todos`、`POST /api/advance-state` 已拿到真实现网证据；其中新建任务 `JJC-20260428-001` 已成功创建，随后又通过真实 UUID `a38d3eab-415d-4e08-8109-e8f84ca7fce6` 完成 `Taizi -> Zhongshu` 推进
+- 前台 dashboard 写入口已补到登录态真实 smoke：匿名直打 `POST /api/create-task` 仍会返回 **401 未登录或会话已过期**，但带有效 `edict_token` 后，`POST /api/auth/login`、`POST /api/create-task`、`POST /api/task-todos`、`POST /api/advance-state`、`POST /api/review-action`、`POST /api/dispatch-task` 已拿到真实现网证据；其中新建任务 `JJC-20260428-001` 已成功创建，随后通过真实 UUID `a38d3eab-415d-4e08-8109-e8f84ca7fce6` 完成 `Taizi -> Zhongshu -> Menxia -> Assigned -> Doing(工部)` 整段推进
 - legacy `review-action`：**已在重启 backend API 后恢复路由并完成真实 smoke**；对 `PROBE-BE-20260428-151828` 现场 `POST /api/tasks/by-legacy/{legacy_id}/review-action` 返回 **200 OK**，任务状态从 `Menxia` 准奏推进到 `Assigned`
 - legacy `dispatch-target`：**已在重启 backend API 后恢复路由并完成真实 smoke**；对 `PROBE-BACKEND-DIRECT-001` 现场 `POST /api/tasks/by-legacy/{legacy_id}/dispatch-target` 返回 **200 OK**，`assignee_org` 已真实改写为 `工部`
 - 三面一致性本轮已补齐：`/api/tasks`、`data/tasks_source.json`、`live_status.json.taskSourceMeta` 当前都已追平到 `count=2`，且 `PROBE-BE-20260428-151828` / `PROBE-BACKEND-DIRECT-001` 的 `state`、`assignee_org`、`updatedAt` 已能跨三面对应；因此“导出未追平”不再是当前阻塞
@@ -77,7 +77,7 @@
 - **backend 主写 / 兼容导出过渡态已经进入生产默认值**
 - **现网已不再是“锁在 JSON 主路”的旧状态**
 - **backend 原生 create / legacy get/todos/progress/部分 transition / backend dispatch 已拿到真实现网证据**
-- **legacy review-action / dispatch-target 已在 backend 重启后恢复并拿到真实现网证据，三面一致性与 export 刷新也已追平，前台登录态写链也已补到关键闭环；但仍缺前台 progress 入口口径澄清与更多自然业务样本，当前阶段仍然只能叫“过渡态验收中”，不能叫“纯 backend 主链切换完成”**
+- **legacy review-action / dispatch-target 已在 backend 重启后恢复并拿到真实现网证据，三面一致性与 export 刷新也已追平，前台登录态写链也已补到完整关键闭环；但仍缺前台 progress 入口口径澄清与更多自然业务样本，当前阶段仍然只能叫“过渡态验收中”，不能叫“纯 backend 主链切换完成”**
 - **当前看到的 backend 样本仍薄，而且主要还是 probe 证据；自然样本厚度仍需继续补**
 
 关键坑点：
@@ -173,6 +173,60 @@
 - `journalctl -u edict-dashboard.service` 已出现多轮明确现场证据：`自动派发跳过: shangshu main 会话保护已生效，避免与 gateway 主会话重入冲突`。
 - **post-restart 新窗口未再看到旧 `shangshu` 锁 session id 复发**：`/tmp/openclaw/openclaw-2026-04-28.log` 在 `12:46:57Z` 之后未再出现旧 session id `74b36d4d-6a8c-4ab9-a9da-6f6fcbcb0c75`，也未再出现 `session:agent:shangshu:main` 的新 lock/failover 样本。
 - 当前新 `12d72ced-5f3a-4bb9-8252-2f522d960dbd.jsonl` 仍为 `0` 字节、无 `.lock`，说明 recovery 后没有立刻再次自锁。
+
+### 4.2.3 2026-04-28 晚间 live recovery 验证收口（DM / 前台登录态 / export 三层）
+#### 现查结果
+- **Feishu DM 闭环仍可实锤**：`/tmp/openclaw/openclaw-2026-04-28.log` 最新窗口仍能抓到 `dispatch complete (queuedFinal=true, replies=2)`（`13:00:57.038Z`）、随后 `received message`（`13:00:57.399Z`）与 `dispatching to agent`（`13:00:57.405Z`）。这说明当前不是 DM 死链，而是**链路可闭环但运行态不干净**。
+- **前台登录态 smoke 不只是文档口径，当前 export 投影里仍留有真实产物**：`data/tasks_source.json` 当前仍存在两条 `meta.source=dashboard.create-task` 的前台样本，标题均为 `front-auth-smoke-20260428-2014`，并保留 `meta.legacy_id=JJC-20260428-001`：
+  - `0d018beb-fd10-463b-882c-77779a25a486`
+  - `a38d3eab-415d-4e08-8109-e8f84ca7fce6`
+- **backend/export 三面对齐仍在**：`data/live_status.json.taskSource=backend_api_export`，`taskSourceMeta.count=4`；`data/tasks_backend_export_meta.json.count=4`；`data/tasks_source.json` 当前也确为 4 条任务。
+- **此前 backend/legacy acceptance smoke 的任务本体仍在 export 面可读**：
+  - `cea48d95-fe4d-4f84-a655-4387f0cffec4`（`PROBE-BE-20260428-151828`）当前仍为 `state=Assigned`、`assignee_org=工部`
+  - `5a0e4b5e-4e5d-498d-8203-0d6e5875f221`（`PROBE-BACKEND-DIRECT-001`）当前仍保留 `legacy-route-real-smoke` 到 `工部` 的 flow
+
+#### 验证口径
+- **本轮已把“前台登录态 smoke / DM 闭环已恢复”补到 live log + export 数据面双重证据，不再只是文档转述。**
+- **但这不等于彻底健康**：同一日晚间更早窗口仍持续出现 taizi 侧 `session file locked`、`Gateway agent failed; falling back to embedded`、`model_fallback_decision ... reason=timeout`。
+- 因此当前最准确定性应为：**主链可闭环，运行态仍属不稳定恢复态；shangshu main 重入已止血，但 taizi 侧剩余自锁/长跑脏态仍需继续追。**
+
+### 4.2.4 2026-04-28 晚间 taizi direct session 深挖结论（锁持有者 / transcript 尾部）
+#### 现查结果
+- 当前 taizi 剩余脏点已进一步收敛到 **Feishu direct session**：`agent:taizi:feishu:direct:ou_ed2187f2ad27e0b7876913371e72c06a`。
+- `sessions.json` 现场：
+  - `agent:taizi:main -> b1e4202b-da30-4b3b-a6aa-b465597a0dd0`，`status=running`，但**当前无 `.lock`**
+  - `agent:taizi:feishu:direct:... -> 3afd9434-7539-462e-96c4-c41903c976d9`，`status=running`，`contextTokens=200000`，transcript 已长到 `1166411` 字节，且**当前唯一存在的 taizi 锁文件**就是 `3afd9434-7539-462e-96c4-c41903c976d9.jsonl.lock`
+- 锁文件内容显示 `pid=1118485`、`createdAt=2026-04-28T13:16:01.305Z`；进一步按 `/proc/*/fd` 实查，**当前实际持有这把锁的活进程也正是 live `openclaw-gateway` PID `1118485`**。这说明它不是孤儿锁残渣，而是**live gateway 仍在占着当前用户直聊 session**。
+- transcript 尾部补证：
+  - `2026-04-28T13:00:55.412Z` 出现空 assistant 结束：`stopReason=error`、`errorMessage=524 status code (no body)`
+  - 随后 `2026-04-28T13:16:01.370Z` 又收到用户新一轮 `继续`
+  - `2026-04-28T13:26:15.088Z` 之后，这条 direct session 继续在同一 transcript 内跑前台登录态 smoke 的后续推进
+- 旧脏态证据仍在同一 session 上留痕：此前已出现 `Removed orphaned user message to prevent consecutive user turns`，且 compaction 也出现过 `outcome=failed reason=timeout`。
+
+#### 结论
+- **taizi main 已不再是当前主要锁点；当前主脏点就是用户直聊 direct session `3afd9434-...` 本身。**
+- **这不是死锁文件残留，而是 live `openclaw-gateway` 仍在真实占用/复用这条 direct session。**
+- 因此当前最准确口径应更新为：**DM 主链能闭环，但当前用户直聊 session 仍处于 long-running + live 持锁 + 历史 524/消息整理脏态并存的未收口状态。**
+
+### 4.2.5 2026-04-28 晚间 taizi direct session 定向旋转执行结果（已获确认后执行）
+#### 过程
+- 已按最小爆破面只旋转当前用户直聊 session：
+  - session key：`agent:taizi:feishu:direct:ou_ed2187f2ad27e0b7876913371e72c06a`
+  - 旧 session：`3afd9434-7539-462e-96c4-c41903c976d9`
+  - 新 session：`57235628-f120-42e1-8382-8678ca9fa15b`
+- 已先备份到：`/root/.openclaw/backups/direct-session-rotate-20260428-214339/`
+- 本轮没有触碰 `agent:taizi:main`，也没有改 edict 任务数据。
+- 随后已执行 `systemctl --user restart openclaw-gateway` 释放 live lock。
+
+#### 结果
+- **旧 direct lock 已释放**：`3afd9434-7539-462e-96c4-c41903c976d9.jsonl.lock` 已不存在。
+- **gateway 已切到新进程**：当前 live `openclaw-gateway` PID 为 `1634650`。
+- **新 direct session 映射已生效**：`sessions.json` 当前已指向 `57235628-f120-42e1-8382-8678ca9fa15b`。
+- **新 session 文件已创建但尚未写入**：`57235628-f120-42e1-8382-8678ca9fa15b.jsonl` 当前为 `0` 字节，且此刻**无新 `.lock`**。
+
+#### 当前口径
+- 这次操作已经完成了**结构性止血**：旧的 live direct lock 被成功切走。
+- 但截至本轮复核，还**没有拿到新 session 上的 post-restart DM 实时闭环样本**；因此当前状态应表述为：**旧脏 direct session 已成功切离，运行态正在等待新 DM 窗口的活样本验证**，不能提前写成“已彻底恢复”。
 
 ### 4.3 当前定性
 - **消息进得来，而且 completion 也仍在继续出现**

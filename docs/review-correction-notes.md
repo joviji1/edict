@@ -374,12 +374,13 @@
   - `POST /api/create-task` → 200 OK，创建 `JJC-20260428-001`
   - `POST /api/task-todos` → 200 OK
   - `POST /api/advance-state` → 200 OK（使用真实 UUID `a38d3eab-415d-4e08-8109-e8f84ca7fce6`，任务从 `Taizi` 推进到 `Zhongshu`）
+  - 后续继续在正确状态下补测通过：先 `Zhongshu -> Menxia`，再 `POST /api/review-action` → 200 OK（`Assigned`），最后 `POST /api/dispatch-task` → 200 OK（显式派给 `工部`，任务进入 `Doing`）
 - 明确写清：`/api/advance-state`、`/api/dispatch-task`、`/api/review-action` 这类前台状态推进接口吃的是**真实 UUID**，不是 legacy id；误用 legacy id 会得到“任务不存在”的假失败。
 - 将 `/api/task-progress` 从前台验收清单中拿掉，改为“当前 dashboard 服务端未提供该接口，需单列澄清，不应继续作为 smoke 失败项”。
 
 ### 影响口径
 - 需要改掉“前台登录态写链仍未验完”的笼统说法。
-- 状态词应更新为“登录态关键写链已打通，剩余是接口口径澄清与更多自然样本补厚”。
+- 状态词应更新为“登录态关键写链已打通，create / todos / advance / review / dispatch 均已在正确状态下拿到现网证据；剩余是接口口径澄清与更多自然样本补厚”。
 
 ### Hermes玄成 处理结果
 - 待处理
