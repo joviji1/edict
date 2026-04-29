@@ -11,7 +11,7 @@ Endpoints:
   GET  /api/model-change-log   → data/model_change_log.json
   GET  /api/last-result        → data/last_model_change_result.json
 """
-import json, pathlib, subprocess, sys, threading, argparse, datetime, logging, re, os, socket
+import json, pathlib, subprocess, sys, threading, argparse, datetime, logging, re, os, socket, shutil
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, quote
 from urllib.request import Request, urlopen
@@ -44,6 +44,10 @@ from channels import get_channel, get_channel_info, CHANNELS as NOTIFICATION_CHA
 OCLAW_HOME = pathlib.Path.home() / '.openclaw'
 MAX_REQUEST_BODY = 1 * 1024 * 1024  # 1 MB
 ALLOWED_ORIGIN = None  # Set via --cors; None means restrict to localhost
+
+
+def python_bin():
+    return os.environ.get('EDICT_PYTHON') or sys.executable or 'python3'
 _DASHBOARD_PORT = 7891  # Updated at startup from --port arg
 _DEFAULT_ORIGINS = {
     'http://127.0.0.1:7891', 'http://localhost:7891',
@@ -55,6 +59,9 @@ BASE = pathlib.Path(__file__).parent
 DIST = BASE / 'dist'          # React 构建产物 (npm run build)
 DATA = BASE.parent / "data"
 SCRIPTS = BASE.parent / 'scripts'
+TASK_WRITE_MODE = os.environ.get('EDICT_TASK_WRITE_MODE', 'json')
+BACKEND_URL = os.environ.get('EDICT_BACKEND_URL', 'http://127.0.0.1:18000').rstrip('/')
+BACKEND_TIMEOUT = float(os.environ.get('EDICT_BACKEND_TIMEOUT', '10'))
 _ACTIVE_TASK_DATA_DIR = None
 
 # 静态资源 MIME 类型
@@ -146,10 +153,41 @@ def load_tasks():
     return atomic_json_read(task_data_dir / 'tasks_source.json', [])
 
 
-def save_tasks(tasks):
-    task_data_dir = get_task_data_dir()
+def _task_write_mode():
+    return str(TASK_WRITE_MODE or 'json').strip().lower() or 'json'
+
+
+def _backend_json_request(method, path, payload):
+    url = f'{BACKEND_URL}{path}'
+    data = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+    req = Request(url, data=data, method=method, headers={
+        'Content-Type': 'application/json; charset=utf-8',
+        'Accept': 'application/json',
+    })
+    with urlopen(req, timeout=BACKEND_TIMEOUT) as resp:
+        body = resp.read().decode('utf-8')
+        return json.loads(body) if body else {}
+
+
+def _sync_governance_samples(task_data_dir=None):
+    task_data_dir = pathlib.Path(task_data_dir or get_task_data_dir())
+    script = task_data_dir.parent / 'scripts' / 'sync_governance_samples.py'
+    if not script.exists():
+        script = SCRIPTS / 'sync_governance_samples.py'
+    if not script.exists():
+        return
+    try:
+        env = dict(os.environ)
+        env['EDICT_DATA_DIR'] = str(task_data_dir)
+        subprocess.run([python_bin(), str(script)], timeout=30, env=env)
+    except Exception as e:
+        log.warning(f'sync_governance_samples.py 触发失败: {e}')
+
+
+
+def _post_save_tasks(tasks, task_data_dir):
     _notify_pending_confirm_tasks(tasks, task_data_dir)
-    atomic_json_write(task_data_dir / 'tasks_source.json', tasks)
+    _sync_governance_samples(task_data_dir)
     # Trigger refresh (异步，不阻塞，避免僵尸进程)
     script = task_data_dir.parent / 'scripts' / 'refresh_live_data.py'
     if not script.exists():
@@ -157,10 +195,48 @@ def save_tasks(tasks):
 
     def _refresh():
         try:
-            subprocess.run(['python3', str(script)], timeout=30)
+            env = dict(os.environ)
+            env['EDICT_DATA_DIR'] = str(task_data_dir)
+            subprocess.run([python_bin(), str(script)], timeout=30, env=env)
         except Exception as e:
             log.warning(f'refresh_live_data.py 触发失败: {e}')
     threading.Thread(target=_refresh, daemon=True).start()
+
+
+def save_tasks(tasks):
+    task_data_dir = get_task_data_dir()
+    atomic_json_write(task_data_dir / 'tasks_source.json', tasks)
+    _post_save_tasks(tasks, task_data_dir)
+
+
+def modify_tasks(updater):
+    task_data_dir = get_task_data_dir()
+
+    def _apply(current):
+        tasks = current if isinstance(current, list) else []
+        result = updater(tasks)
+        return tasks if result is None else result
+
+    updated = atomic_json_update(task_data_dir / 'tasks_source.json', _apply, [])
+    _post_save_tasks(updated, task_data_dir)
+    return updated
+
+
+def modify_task(task_id, updater):
+    state = {'found': False, 'result': None}
+
+    def _update(tasks):
+        task = next((t for t in tasks if t.get('id') == task_id), None)
+        if not task:
+            return tasks
+        state['found'] = True
+        state['result'] = updater(task)
+        if task.get('id') == task_id and 'updatedAt' not in task:
+            task['updatedAt'] = now_iso()
+        return tasks
+
+    tasks = modify_tasks(_update)
+    return state['found'], state['result'], tasks
 
 
 def _load_notification_settings(base_dir=None):
@@ -252,49 +328,179 @@ def _notify_review_result(task, action, comment='', base_dir=None):
     return success
 
 
+def _create_task_via_backend(*, legacy_id, title, org='中书省', official='中书令', priority='normal', template_id='', params=None, target_dept=''):
+    payload = {
+        'title': title,
+        'description': '等待太子接旨分拣',
+        'priority': priority,
+        'assignee_org': target_dept or None,
+        'creator': official or '中书令',
+        'tags': [legacy_id],
+        'meta': {
+            'legacy_id': legacy_id,
+            'source': 'dashboard.create-task',
+            'source_org': org,
+            'official': official,
+            'templateId': template_id or '',
+            'templateParams': params or {},
+            'targetDept': target_dept or '',
+            'now': '等待太子接旨分拣',
+        },
+    }
+    try:
+        result = _backend_json_request('POST', '/api/tasks', payload)
+        backend_task_id = str(result.get('task_id') or '').strip()
+        if not backend_task_id:
+            return {'ok': False, 'error': f'backend create returned invalid payload: {result!r}'}
+        return {
+            'ok': True,
+            'taskId': legacy_id,
+            'backendTaskId': backend_task_id,
+            'traceId': result.get('trace_id'),
+            'state': result.get('state'),
+            'message': f'旨意 {legacy_id} 已写入 backend，等待太子接旨',
+        }
+    except Exception as e:
+        return {'ok': False, 'error': f'backend create failed: {e}'}
+
+
+def _update_task_todos_via_backend(task_id, todos):
+    try:
+        result = _backend_json_request('PUT', f'/api/tasks/by-legacy/{quote(str(task_id))}/todos', {'todos': todos})
+        return {'ok': True, 'message': result.get('message') or 'backend todos ok'}
+    except Exception as e:
+        return {'ok': False, 'error': f'backend todos failed: {e}'}
+
+
+def _dept_agent_id(org_name):
+    return {
+        '工部': 'gongbu',
+        '户部': 'hubu',
+        '礼部': 'libu',
+        '兵部': 'bingbu',
+        '刑部': 'xingbu',
+        '吏部': 'libu_hr',
+    }.get(str(org_name or '').strip(), '')
+
+
+def _dispatch_task_via_backend(task_id, target_dept, comment=''):
+    try:
+        current = _backend_json_request('GET', f'/api/tasks/by-legacy/{quote(str(task_id))}')
+        current_state = str(current.get('state') or '').strip()
+        if current_state not in ('Assigned', 'Next', 'Doing'):
+            return {'ok': False, 'error': f'任务 {task_id} 当前状态为 {current_state}，不可显式派部'}
+
+        updated = _backend_json_request(
+            'POST',
+            f'/api/tasks/by-legacy/{quote(str(task_id))}/dispatch-target',
+            {
+                'target_dept': target_dept,
+                'agent': 'shangshu',
+                'reason': comment or f'显式改派到{target_dept}',
+            },
+        )
+        backend_task_id = str(updated.get('task_id') or current.get('task_id') or '').strip()
+        if not backend_task_id:
+            return {'ok': False, 'error': f'backend legacy get returned invalid payload: {current!r}'}
+
+        if current_state in ('Assigned', 'Next'):
+            _backend_json_request(
+                'POST',
+                f'/api/tasks/by-legacy/{quote(str(task_id))}/transition',
+                {
+                    'new_state': 'Doing',
+                    'agent': 'shangshu',
+                    'reason': comment or f'显式改派到{target_dept}',
+                },
+            )
+
+        agent_id = _dept_agent_id(target_dept)
+        if not agent_id:
+            return {'ok': False, 'error': f'无法映射目标部门到 agent: {target_dept}'}
+        _backend_json_request(
+            'POST',
+            f'/api/tasks/{quote(backend_task_id)}/dispatch?agent={quote(agent_id)}&message={quote(comment or f"显式派发到{target_dept}")}',
+            None,
+        )
+        return {
+            'ok': True,
+            'message': f'{task_id} 已显式派给 {target_dept} 并进入执行',
+            'state': 'Doing',
+            'org': target_dept,
+            'targetDept': target_dept,
+            'backendTaskId': backend_task_id,
+        }
+    except Exception as e:
+        return {'ok': False, 'error': f'backend dispatch failed: {e}'}
+
+
+
+def _review_action_via_backend(task_id, action, comment=''):
+    try:
+        result = _backend_json_request(
+            'POST',
+            f'/api/tasks/by-legacy/{quote(str(task_id))}/review-action',
+            {
+                'action': action,
+                'comment': comment,
+                'agent': 'menxia',
+            },
+        )
+        return {
+            'ok': True,
+            'message': result.get('message') or f'{task_id} {"已准奏" if action == "approve" else "已封驳"}',
+            'state': result.get('state'),
+            'review_round': result.get('review_round', 0),
+        }
+    except Exception as e:
+        return {'ok': False, 'error': f'backend review-action failed: {e}'}
+
+
+
 def handle_task_action(task_id, action, reason):
     """Stop/cancel/resume a task from the dashboard."""
-    tasks = load_tasks()
-    task = next((t for t in tasks if t.get('id') == task_id), None)
-    if not task:
+    state = {'task': None}
+
+    def _apply(task):
+        state['task'] = task
+        old_state = task.get('state', '')
+        _ensure_scheduler(task)
+        _scheduler_snapshot(task, f'task-action-before-{action}')
+
+        if action == 'stop':
+            task['state'] = 'Blocked'
+            task['block'] = reason or '皇上叫停'
+            task['now'] = f'⏸️ 已暂停：{reason}'
+        elif action == 'cancel':
+            task['state'] = 'Cancelled'
+            task['block'] = reason or '皇上取消'
+            task['now'] = f'🚫 已取消：{reason}'
+        elif action == 'resume':
+            task['state'] = task.get('_prev_state', 'Doing')
+            task['block'] = '无'
+            task['now'] = f'▶️ 已恢复执行'
+
+        if action in ('stop', 'cancel'):
+            task['_prev_state'] = old_state
+
+        task.setdefault('flow_log', []).append({
+            'at': now_iso(),
+            'from': '皇上',
+            'to': task.get('org', ''),
+            'remark': f'{"⏸️ 叫停" if action == "stop" else "🚫 取消" if action == "cancel" else "▶️ 恢复"}：{reason}'
+        })
+
+        if action == 'resume':
+            _scheduler_mark_progress(task, f'恢复到 {task.get("state", "Doing")}')
+        else:
+            _scheduler_add_flow(task, f'皇上{action}：{reason or "无"}')
+
+        task['updatedAt'] = now_iso()
+
+    found, _, _ = modify_task(task_id, _apply)
+    task = state['task']
+    if not found or not task:
         return {'ok': False, 'error': f'任务 {task_id} 不存在'}
-
-    old_state = task.get('state', '')
-    _ensure_scheduler(task)
-    _scheduler_snapshot(task, f'task-action-before-{action}')
-
-    if action == 'stop':
-        task['state'] = 'Blocked'
-        task['block'] = reason or '皇上叫停'
-        task['now'] = f'⏸️ 已暂停：{reason}'
-    elif action == 'cancel':
-        task['state'] = 'Cancelled'
-        task['block'] = reason or '皇上取消'
-        task['now'] = f'🚫 已取消：{reason}'
-    elif action == 'resume':
-        # Resume to previous active state or Doing
-        task['state'] = task.get('_prev_state', 'Doing')
-        task['block'] = '无'
-        task['now'] = f'▶️ 已恢复执行'
-
-    if action in ('stop', 'cancel'):
-        task['_prev_state'] = old_state  # Save for resume
-
-    task.setdefault('flow_log', []).append({
-        'at': now_iso(),
-        'from': '皇上',
-        'to': task.get('org', ''),
-        'remark': f'{"⏸️ 叫停" if action == "stop" else "🚫 取消" if action == "cancel" else "▶️ 恢复"}：{reason}'
-    })
-
-    if action == 'resume':
-        _scheduler_mark_progress(task, f'恢复到 {task.get("state", "Doing")}')
-    else:
-        _scheduler_add_flow(task, f'皇上{action}：{reason or "无"}')
-
-    task['updatedAt'] = now_iso()
-
-    save_tasks(tasks)
     if action == 'resume' and task.get('state') not in _TERMINAL_STATES:
         dispatch_for_state(task_id, task, task.get('state'), trigger='resume')
     label = {'stop': '已叫停', 'cancel': '已取消', 'resume': '已恢复'}[action]
@@ -303,41 +509,61 @@ def handle_task_action(task_id, action, reason):
 
 def handle_archive_task(task_id, archived, archive_all_done=False):
     """Archive or unarchive a task, or batch-archive all Done/Cancelled tasks."""
-    tasks = load_tasks()
     if archive_all_done:
-        count = 0
-        for t in tasks:
-            if t.get('state') in ('Done', 'Cancelled') and not t.get('archived'):
-                t['archived'] = True
-                t['archivedAt'] = now_iso()
-                count += 1
-        save_tasks(tasks)
-        return {'ok': True, 'message': f'{count} 道旨意已归档', 'count': count}
-    task = next((t for t in tasks if t.get('id') == task_id), None)
-    if not task:
+        state = {'count': 0}
+
+        def _archive_all(tasks):
+            for t in tasks:
+                if t.get('state') in ('Done', 'Cancelled') and not t.get('archived'):
+                    t['archived'] = True
+                    t['archivedAt'] = now_iso()
+                    t['updatedAt'] = now_iso()
+                    state['count'] += 1
+
+        modify_tasks(_archive_all)
+        return {'ok': True, 'message': f"{state['count']} 道旨意已归档", 'count': state['count']}
+
+    def _apply(task):
+        task['archived'] = archived
+        if archived:
+            task['archivedAt'] = now_iso()
+        else:
+            task.pop('archivedAt', None)
+        task['updatedAt'] = now_iso()
+
+    found, _, _ = modify_task(task_id, _apply)
+    if not found:
         return {'ok': False, 'error': f'任务 {task_id} 不存在'}
-    task['archived'] = archived
-    if archived:
-        task['archivedAt'] = now_iso()
-    else:
-        task.pop('archivedAt', None)
-    task['updatedAt'] = now_iso()
-    save_tasks(tasks)
     label = '已归档' if archived else '已取消归档'
     return {'ok': True, 'message': f'{task_id} {label}'}
 
 
 def update_task_todos(task_id, todos):
     """Update the todos list for a task."""
-    tasks = load_tasks()
-    task = next((t for t in tasks if t.get('id') == task_id), None)
-    if not task:
-        return {'ok': False, 'error': f'任务 {task_id} 不存在'}
+    mode = _task_write_mode()
+    if mode in ('dual', 'api'):
+        backend_result = _update_task_todos_via_backend(task_id, todos)
+        if backend_result.get('ok'):
+            return backend_result
+        log.warning(f'backend task-todos failed for {task_id}: {backend_result.get("error")}')
+        if mode == 'api':
+            return backend_result
 
-    task['todos'] = todos
-    task['updatedAt'] = now_iso()
-    save_tasks(tasks)
+    def _apply(task):
+        task['todos'] = todos
+        task['updatedAt'] = now_iso()
+
+    found, _, _ = modify_task(task_id, _apply)
+    if not found:
+        return {'ok': False, 'error': f'任务 {task_id} 不存在'}
     return {'ok': True, 'message': f'{task_id} todos 已更新'}
+
+
+def _todo_progress(task):
+    todos = task.get('todos') or []
+    total = len(todos)
+    completed = sum(1 for td in todos if td.get('status') == 'completed')
+    return completed, total
 
 
 def adopt_court_conclusion(session_id, apply=None, task_id=''):
@@ -518,7 +744,7 @@ def add_skill_to_agent(agent_id, skill_name, description, trigger=''):
     skill_md.write_text(template)
     # Re-sync agent config
     try:
-        subprocess.run(['python3', str(SCRIPTS / 'sync_agent_config.py')], timeout=10)
+        subprocess.run([python_bin(), str(SCRIPTS / 'sync_agent_config.py')], timeout=10)
     except Exception:
         pass
     return {'ok': True, 'message': f'技能 {skill_name} 已添加到 {agent_id}', 'path': str(skill_md)}
@@ -632,7 +858,7 @@ def add_remote_skill(agent_id, skill_name, source_url, description=''):
     
     # Re-sync agent config
     try:
-        subprocess.run(['python3', str(SCRIPTS / 'sync_agent_config.py')], timeout=10)
+        subprocess.run([python_bin(), str(SCRIPTS / 'sync_agent_config.py')], timeout=10)
     except Exception:
         pass
     
@@ -750,7 +976,7 @@ def remove_remote_skill(agent_id, skill_name):
         
         # Re-sync agent config
         try:
-            subprocess.run(['python3', str(SCRIPTS / 'sync_agent_config.py')], timeout=10)
+            subprocess.run([python_bin(), str(SCRIPTS / 'sync_agent_config.py')], timeout=10)
         except Exception:
             pass
         
@@ -855,49 +1081,72 @@ def handle_create_task(title, org='中书省', official='中书令', priority='n
         return {'ok': False, 'error': f'标题过短（{len(title)}<{_MIN_TITLE_LEN}字），不像是旨意'}
     if title.lower() in _JUNK_TITLES:
         return {'ok': False, 'error': f'「{title}」不是有效旨意，请输入具体工作指令'}
-    # 生成 task id: JJC-YYYYMMDD-NNN
+
+    create_state = {'task_id': '', 'new_task': None}
     today = datetime.datetime.now().strftime('%Y%m%d')
-    tasks = load_tasks()
-    today_ids = [t['id'] for t in tasks if t.get('id', '').startswith(f'JJC-{today}-')]
-    seq = 1
-    if today_ids:
-        nums = [int(tid.split('-')[-1]) for tid in today_ids if tid.split('-')[-1].isdigit()]
-        seq = max(nums) + 1 if nums else 1
-    task_id = f'JJC-{today}-{seq:03d}'
-    # 正确流程起点：皇上 -> 太子分拣
-    # target_dept 记录模板建议的最终执行部门（仅供尚书省派发参考）
-    initial_org = '太子'
-    new_task = {
-        'id': task_id,
-        'title': title,
-        'official': official,
-        'org': initial_org,
-        'state': 'Taizi',
-        'now': '等待太子接旨分拣',
-        'eta': '-',
-        'block': '无',
-        'output': '',
-        'ac': '',
-        'priority': priority,
-        'templateId': template_id,
-        'templateParams': params or {},
-        'flow_log': [{
-            'at': now_iso(),
-            'from': '皇上',
-            'to': initial_org,
-            'remark': f'下旨：{title}'
-        }],
-        'updatedAt': now_iso(),
-    }
-    if target_dept:
-        new_task['targetDept'] = target_dept
 
-    _ensure_scheduler(new_task)
-    _scheduler_snapshot(new_task, 'create-task-initial')
-    _scheduler_mark_progress(new_task, '任务创建')
+    def _create(tasks):
+        today_ids = [t['id'] for t in tasks if t.get('id', '').startswith(f'JJC-{today}-')]
+        seq = 1
+        if today_ids:
+            nums = [int(tid.split('-')[-1]) for tid in today_ids if tid.split('-')[-1].isdigit()]
+            seq = max(nums) + 1 if nums else 1
+        task_id = f'JJC-{today}-{seq:03d}'
+        initial_org = '太子'
+        new_task = {
+            'id': task_id,
+            'title': title,
+            'official': official,
+            'org': initial_org,
+            'state': 'Taizi',
+            'now': '等待太子接旨分拣',
+            'eta': '-',
+            'block': '无',
+            'output': '',
+            'ac': '',
+            'priority': priority,
+            'templateId': template_id,
+            'templateParams': params or {},
+            'flow_log': [{
+                'at': now_iso(),
+                'from': '皇上',
+                'to': initial_org,
+                'remark': f'下旨：{title}'
+            }],
+            'updatedAt': now_iso(),
+        }
+        if target_dept:
+            new_task['targetDept'] = target_dept
 
-    tasks.insert(0, new_task)
-    save_tasks(tasks)
+        _ensure_scheduler(new_task)
+        _scheduler_snapshot(new_task, 'create-task-initial')
+        _scheduler_mark_progress(new_task, '任务创建')
+        tasks.insert(0, new_task)
+        create_state['task_id'] = task_id
+        create_state['new_task'] = new_task
+
+    mode = _task_write_mode()
+    if mode in ('dual', 'api'):
+        backend_result = _create_task_via_backend(
+            legacy_id=f'JJC-{today}-PENDING',
+            title=title,
+            org=org,
+            official=official,
+            priority=priority,
+            template_id=template_id,
+            params=params,
+            target_dept=target_dept,
+        )
+        if backend_result.get('ok'):
+            log.info(f'创建任务(backend): {backend_result.get("taskId") or backend_result.get("legacyId") or "JJC-backend"} | {title[:40]}')
+            return backend_result
+        log.warning(f'backend create-task failed for JJC-{today}-PENDING: {backend_result.get("error")}')
+        if mode == 'api':
+            return backend_result
+
+    modify_tasks(_create)
+    task_id = create_state['task_id']
+    new_task = create_state['new_task']
     log.info(f'创建任务: {task_id} | {title[:40]}')
 
     dispatch_for_state(task_id, new_task, 'Taizi', trigger='imperial-edict')
@@ -907,91 +1156,110 @@ def handle_create_task(title, org='中书省', official='中书令', priority='n
 
 def handle_review_action(task_id, action, comment=''):
     """门下省御批：准奏/封驳。兼容 PendingConfirm 制度门禁。"""
-    tasks = load_tasks()
-    task = next((t for t in tasks if t.get('id') == task_id), None)
-    if not task:
-        return {'ok': False, 'error': f'任务 {task_id} 不存在'}
-    if task.get('state') not in ('Review', 'Menxia', 'PendingConfirm'):
-        return {'ok': False, 'error': f'任务 {task_id} 当前状态为 {task.get("state")}，无法御批'}
+    mode = _task_write_mode()
+    if mode in ('dual', 'api'):
+        backend_result = _review_action_via_backend(task_id, action, comment)
+        if backend_result.get('ok'):
+            return backend_result
+        log.warning(f'backend review-action failed for {task_id}: {backend_result.get("error")}')
+        if mode == 'api':
+            return backend_result
 
-    _ensure_scheduler(task)
-    _scheduler_snapshot(task, f'review-before-{action}')
+    review_state = {'task': None}
 
-    pending = task.get('pending_confirm') or {}
-    gate_checks = list(task.get('gate_checks') or [])
-    is_pending_confirm = task.get('state') == 'PendingConfirm'
+    def _apply(task):
+        if task.get('state') not in ('Review', 'Menxia', 'PendingConfirm'):
+            return {'error': f'任务 {task_id} 当前状态为 {task.get("state")}，无法御批'}
 
-    if action == 'approve':
-        if is_pending_confirm:
-            target_state = pending.get('target_state') or 'Done'
-            task['state'] = target_state
-            if target_state == 'Done':
-                task['now'] = '御批通过，任务完成'
-                remark = f'✅ 准奏：{comment or "门禁确认通过"}'
-                to_dept = '皇上'
-            elif target_state == 'Cancelled':
-                task['now'] = '御批同意撤销'
-                remark = f'✅ 准奏撤销：{comment or "门禁确认通过"}'
+        _ensure_scheduler(task)
+        _scheduler_snapshot(task, f'review-before-{action}')
+
+        pending = task.get('pending_confirm') or {}
+        gate_checks = list(task.get('gate_checks') or [])
+        is_pending_confirm = task.get('state') == 'PendingConfirm'
+
+        if action == 'approve':
+            if is_pending_confirm:
+                target_state = pending.get('target_state') or 'Done'
+                task['state'] = target_state
+                if target_state == 'Done':
+                    task['now'] = '御批通过，任务完成'
+                    remark = f'✅ 准奏：{comment or "门禁确认通过"}'
+                    to_dept = '皇上'
+                elif target_state == 'Cancelled':
+                    task['now'] = '御批同意撤销'
+                    remark = f'✅ 准奏撤销：{comment or "门禁确认通过"}'
+                    to_dept = '尚书省'
+                else:
+                    task['now'] = f'御批通过，转入 {target_state}'
+                    remark = f'✅ 准奏：{comment or "门禁确认通过"}'
+                    to_dept = target_state
+                gate_checks.append({
+                    'at': now_iso(),
+                    'gate': 'high_risk_transition',
+                    'from': gate_checks[-1].get('from') if gate_checks else pending.get('source_state', 'PendingConfirm'),
+                    'to': target_state,
+                    'confirm_by': pending.get('confirm_by', 'menxia'),
+                    'risk_key': pending.get('risk_key'),
+                    'result': 'approved',
+                })
+                task.pop('pending_confirm', None)
+                task['gate_checks'] = gate_checks
+            elif task['state'] == 'Menxia':
+                task['state'] = 'Assigned'
+                task['now'] = '门下省准奏，移交尚书省派发'
+                remark = f'✅ 准奏：{comment or "门下省审议通过"}'
                 to_dept = '尚书省'
             else:
-                task['now'] = f'御批通过，转入 {target_state}'
-                remark = f'✅ 准奏：{comment or "门禁确认通过"}'
-                to_dept = target_state
-            gate_checks.append({
-                'at': now_iso(),
-                'gate': 'high_risk_transition',
-                'from': gate_checks[-1].get('from') if gate_checks else pending.get('source_state', 'PendingConfirm'),
-                'to': target_state,
-                'confirm_by': pending.get('confirm_by', 'menxia'),
-                'risk_key': pending.get('risk_key'),
-                'result': 'approved',
-            })
-            task.pop('pending_confirm', None)
-            task['gate_checks'] = gate_checks
-        elif task['state'] == 'Menxia':
-            task['state'] = 'Assigned'
-            task['now'] = '门下省准奏，移交尚书省派发'
-            remark = f'✅ 准奏：{comment or "门下省审议通过"}'
-            to_dept = '尚书省'
-        else:  # Review
-            task['state'] = 'Done'
-            task['now'] = '御批通过，任务完成'
-            remark = f'✅ 御批准奏：{comment or "审查通过"}'
-            to_dept = '皇上'
-    elif action == 'reject':
-        round_num = (task.get('review_round') or 0) + 1
-        task['review_round'] = round_num
-        task['state'] = 'Zhongshu'
-        task['now'] = f'封驳退回中书省修订（第{round_num}轮）'
-        remark = f'🚫 封驳：{comment or "需要修改"}'
-        to_dept = '中书省'
-        if is_pending_confirm:
-            gate_checks.append({
-                'at': now_iso(),
-                'gate': 'high_risk_transition',
-                'from': gate_checks[-1].get('from') if gate_checks else pending.get('source_state', 'PendingConfirm'),
-                'to': pending.get('target_state', 'Done'),
-                'confirm_by': pending.get('confirm_by', 'menxia'),
-                'risk_key': pending.get('risk_key'),
-                'result': 'rejected',
-            })
-            task.pop('pending_confirm', None)
-            task['gate_checks'] = gate_checks
-    else:
-        return {'ok': False, 'error': f'未知操作: {action}'}
+                completed, total = _todo_progress(task)
+                if total > 0 and completed < total:
+                    return {'error': f'子任务尚未全部完成（{completed}/{total}），不能直接准奏完结'}
+                task['state'] = 'Done'
+                task['now'] = '御批通过，任务完成'
+                remark = f'✅ 御批准奏：{comment or "审查通过"}'
+                to_dept = '皇上'
+        elif action == 'reject':
+            round_num = (task.get('review_round') or 0) + 1
+            task['review_round'] = round_num
+            task['state'] = 'Zhongshu'
+            task['now'] = f'封驳退回中书省修订（第{round_num}轮）'
+            remark = f'🚫 封驳：{comment or "需要修改"}'
+            to_dept = '中书省'
+            if is_pending_confirm:
+                gate_checks.append({
+                    'at': now_iso(),
+                    'gate': 'high_risk_transition',
+                    'from': gate_checks[-1].get('from') if gate_checks else pending.get('source_state', 'PendingConfirm'),
+                    'to': pending.get('target_state', 'Done'),
+                    'confirm_by': pending.get('confirm_by', 'menxia'),
+                    'risk_key': pending.get('risk_key'),
+                    'result': 'rejected',
+                })
+                task.pop('pending_confirm', None)
+                task['gate_checks'] = gate_checks
+        else:
+            return {'error': f'未知操作: {action}'}
 
-    task.setdefault('flow_log', []).append({
-        'at': now_iso(),
-        'from': '门下省' if task.get('state') != 'Done' else '皇上',
-        'to': to_dept,
-        'remark': remark
-    })
-    _scheduler_mark_progress(task, f'审议动作 {action} -> {task.get("state")}')
-    task['updatedAt'] = now_iso()
-    save_tasks(tasks)
+        task.setdefault('flow_log', []).append({
+            'at': now_iso(),
+            'from': '门下省' if task.get('state') != 'Done' else '皇上',
+            'to': to_dept,
+            'remark': remark
+        })
+        _scheduler_mark_progress(task, f'审议动作 {action} -> {task.get("state")}')
+        task['updatedAt'] = now_iso()
+        review_state['task'] = copy.deepcopy(task)
+        return {'ok': True}
+
+    found, result, _ = modify_task(task_id, _apply)
+    if not found:
+        return {'ok': False, 'error': f'任务 {task_id} 不存在'}
+    if isinstance(result, dict) and result.get('error'):
+        return {'ok': False, 'error': result['error']}
+
+    task = review_state['task']
     _notify_review_result(task, action, comment, get_task_data_dir())
 
-    # 🚀 审批后自动派发对应 Agent
     new_state = task['state']
     if new_state not in ('Done', 'Cancelled'):
         dispatch_for_state(task_id, task, new_state)
@@ -1048,6 +1316,20 @@ def _check_gateway_probe():
         except Exception:
             continue
     return False
+
+
+def _resolve_openclaw_bin():
+    """解析 dashboard 派发/唤醒时应调用的 OpenClaw CLI 路径。"""
+    explicit = str(os.environ.get('OPENCLAW_BIN') or '').strip()
+    if explicit:
+        p = pathlib.Path(explicit).expanduser()
+        if p.exists():
+            return str(p)
+    for candidate in ('openclaw', 'openclaw.cmd'):
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+    return None
 
 
 def _get_agent_session_status(agent_id):
@@ -1187,6 +1469,9 @@ def wake_agent(agent_id, message=''):
         return {'ok': False, 'error': f'{agent_id} 工作空间不存在，请先配置'}
     if not _check_gateway_alive():
         return {'ok': False, 'error': 'Gateway 未启动，请先运行 openclaw gateway start'}
+    if agent_id == 'taizi':
+        log.warning('⚠️ 跳过 taizi 唤醒：main 会话保护已生效，避免与 gateway 主会话重入冲突')
+        return {'ok': True, 'message': 'taizi 唤醒已跳过：main 会话保护已生效'}
 
     # agent_id 直接作为 runtime_id（openclaw agents list 中的注册名）
     runtime_id = agent_id
@@ -1194,7 +1479,11 @@ def wake_agent(agent_id, message=''):
 
     def do_wake():
         try:
-            cmd = ['openclaw', 'agent', '--agent', runtime_id, '-m', msg, '--timeout', '120']
+            openclaw_bin = _resolve_openclaw_bin()
+            if not openclaw_bin:
+                log.warning(f'⚠️ {agent_id} 唤醒跳过: OpenClaw CLI 未找到')
+                return
+            cmd = [openclaw_bin, 'agent', '--agent', runtime_id, '-m', msg, '--timeout', '120']
             log.info(f'🔔 唤醒 {agent_id}...')
             # 带重试（最多2次）
             for attempt in range(1, 3):
@@ -1235,6 +1524,7 @@ _ORG_AGENT_MAP = {
     '刑部': 'xingbu', '工部': 'gongbu', '吏部': 'libu_hr',
     '中书省': 'zhongshu', '门下省': 'menxia', '尚书省': 'shangshu',
 }
+_SIX_DEPTS = ('礼部', '户部', '兵部', '刑部', '工部', '吏部')
 
 _TERMINAL_STATES = {'Done', 'Cancelled'}
 
@@ -1279,10 +1569,106 @@ def _ensure_scheduler(task):
 def _scheduler_add_flow(task, remark, to=''):
     task.setdefault('flow_log', []).append({
         'at': now_iso(),
-        'from': '太子调度',
-        'to': to or task.get('org', ''),
-        'remark': f'🧭 {remark}'
+        'from': task.get('org', ''),
+        'to': to,
+        'remark': remark,
     })
+
+
+def _collect_menxia_verdict_texts(task):
+    texts = []
+    if isinstance(task, dict):
+        for item in task.get('progress_log') or []:
+            if isinstance(item, dict):
+                texts.append(str(item.get('text', '') or item.get('content', '') or ''))
+            elif item is not None:
+                texts.append(str(item))
+        for item in task.get('flow_log') or []:
+            if isinstance(item, dict):
+                texts.append(str(item.get('remark', '') or item.get('reason', '') or ''))
+        sched = task.get('_scheduler') or {}
+        texts.extend([
+            str(task.get('now', '') or ''),
+            str(task.get('block', '') or ''),
+            str(task.get('output', '') or ''),
+            str(sched.get('lastDispatchError', '') or ''),
+            str(sched.get('stallReason', '') or ''),
+        ])
+    return texts
+
+
+def _task_has_menxia_verdict(task):
+    if not isinstance(task, dict):
+        return False
+    task_id = str(task.get('id') or task.get('task_id') or '').strip()
+    texts = _collect_menxia_verdict_texts(task)
+    if task_id:
+        try:
+            samples = atomic_json_read(get_task_data_dir() / 'tasks_governance_samples.json', [])
+        except Exception:
+            samples = []
+        if isinstance(samples, list):
+            sample = next((item for item in samples if str(item.get('id') or item.get('task_id') or '').strip() == task_id), None)
+            if isinstance(sample, dict):
+                texts.extend(_collect_menxia_verdict_texts(sample))
+    haystack = '\n'.join(texts)
+    verdict_markers = (
+        '结论：准奏', '结论:准奏', '结论：封驳', '结论:封驳',
+        '已准奏', '已封驳', '允许进入尚书省派发', '请补齐后再报',
+        '审议完成，封驳', '审议完成，准奏', '未附中书省方案正文，无法审议', '方案正文缺失'
+    )
+    return any(marker in haystack for marker in verdict_markers)
+
+
+def _menxia_verdict_projection(task_id):
+    result = {
+        'now': '门下省已有明确审议结论',
+        'block': '门下省已给出审议结论，当前不再重复送审',
+        'progress_text': '门下省重复送审保护已生效：已存在明确审议结论，跳过再次派发 menxia main',
+    }
+    try:
+        samples = atomic_json_read(get_task_data_dir() / 'tasks_governance_samples.json', [])
+    except Exception:
+        samples = []
+    if not isinstance(samples, list):
+        return result
+    sample = next((item for item in samples if str(item.get('id') or item.get('task_id') or '').strip() == str(task_id).strip()), None)
+    if not isinstance(sample, dict):
+        return result
+    texts = _collect_menxia_verdict_texts(sample)
+    haystack = '\n'.join(texts)
+    if any(marker in haystack for marker in ('封驳', '请补齐后再报', '未附中书省方案正文，无法审议', '方案正文缺失')):
+        result['now'] = '门下省已封驳，等待中书省补正文后再报'
+        result['block'] = '门下省封驳：当前送审内容未附中书省方案正文，请补齐后再报'
+        result['progress_text'] = '门下省已封驳：当前送审内容未附中书省方案正文，请补齐后再报；已跳过重复送审'
+    elif any(marker in haystack for marker in ('准奏', '允许进入尚书省派发', '已准奏')):
+        result['now'] = '门下省已准奏，等待尚书省后续派发'
+        result['block'] = '无'
+        result['progress_text'] = '门下省已准奏；已跳过重复送审，等待后续派发'
+    return result
+
+
+def _suppress_menxia_repeat_review(task_id, trigger='menxia-repeat-review-guard'):
+    projection = _menxia_verdict_projection(task_id)
+    _update_task_scheduler(task_id, lambda t, s: (
+        t.update({
+            'now': projection['now'],
+            'block': projection['block'],
+        }),
+        (t.setdefault('progress_log', []).append({
+            'ts': now_iso(),
+            'agent': 'menxia-guard',
+            'content': projection['progress_text'],
+        }) if not any(isinstance(item, dict) and projection['progress_text'] == str(item.get('content', '') or item.get('text', '') or '') for item in (t.get('progress_log') or [])) else None),
+        s.update({
+            'lastDispatchAt': now_iso(),
+            'lastDispatchStatus': 'suppressed-repeat-review-guard',
+            'lastDispatchAgent': 'menxia',
+            'lastDispatchTrigger': trigger,
+            'lastDispatchError': '门下省重复送审保护：已存在明确审议结论，跳过再次派发 menxia main',
+        }),
+        _scheduler_add_flow(t, f'已跳过重复送审：menxia（{trigger}）', to='门下省')
+    ))
 
 
 def _scheduler_snapshot(task, note=''):
@@ -1309,15 +1695,13 @@ def _scheduler_mark_progress(task, note=''):
 
 
 def _update_task_scheduler(task_id, updater):
-    tasks = load_tasks()
-    task = next((t for t in tasks if t.get('id') == task_id), None)
-    if not task:
-        return False
-    sched = _ensure_scheduler(task)
-    updater(task, sched)
-    task['updatedAt'] = now_iso()
-    save_tasks(tasks)
-    return True
+    def _apply(task):
+        sched = _ensure_scheduler(task)
+        updater(task, sched)
+        task['updatedAt'] = now_iso()
+
+    found, _, _ = modify_task(task_id, _apply)
+    return found
 
 
 def get_scheduler_state(task_id):
@@ -1900,46 +2284,68 @@ def get_guoshiguan_panel(query='', limit=12):
 
 
 def handle_scheduler_retry(task_id, reason=''):
-    tasks = load_tasks()
-    task = next((t for t in tasks if t.get('id') == task_id), None)
-    if not task:
+    state_holder = {'task': None, 'state': '', 'retryCount': 0}
+
+    def _apply(task):
+        state_holder['task'] = task
+        state = task.get('state', '')
+        state_holder['state'] = state
+        if state in _TERMINAL_STATES or state == 'Blocked':
+            return
+        sched = _ensure_scheduler(task)
+        sched['retryCount'] = int(sched.get('retryCount') or 0) + 1
+        state_holder['retryCount'] = sched['retryCount']
+        sched['lastRetryAt'] = now_iso()
+        sched['lastDispatchTrigger'] = 'taizi-retry'
+        _scheduler_add_flow(task, f'触发重试第{sched["retryCount"]}次：{reason or "超时未推进"}')
+        task['updatedAt'] = now_iso()
+
+    found, _, _ = modify_task(task_id, _apply)
+    task = state_holder['task']
+    state = state_holder['state']
+    if not found or not task:
         return {'ok': False, 'error': f'任务 {task_id} 不存在'}
-    state = task.get('state', '')
     if state in _TERMINAL_STATES or state == 'Blocked':
         return {'ok': False, 'error': f'任务 {task_id} 当前状态 {state} 不支持重试'}
 
-    sched = _ensure_scheduler(task)
-    sched['retryCount'] = int(sched.get('retryCount') or 0) + 1
-    sched['lastRetryAt'] = now_iso()
-    sched['lastDispatchTrigger'] = 'taizi-retry'
-    _scheduler_add_flow(task, f'触发重试第{sched["retryCount"]}次：{reason or "超时未推进"}')
-    task['updatedAt'] = now_iso()
-    save_tasks(tasks)
-
     dispatch_for_state(task_id, task, state, trigger='taizi-retry')
-    return {'ok': True, 'message': f'{task_id} 已触发重试派发', 'retryCount': sched['retryCount']}
+    return {'ok': True, 'message': f'{task_id} 已触发重试派发', 'retryCount': state_holder['retryCount']}
 
 
 def handle_scheduler_escalate(task_id, reason=''):
-    tasks = load_tasks()
-    task = next((t for t in tasks if t.get('id') == task_id), None)
-    if not task:
+    state_holder = {'task': None, 'state': '', 'target': '', 'target_label': '', 'next_level': 0}
+
+    def _apply(task):
+        state_holder['task'] = task
+        state = task.get('state', '')
+        state_holder['state'] = state
+        if state in _TERMINAL_STATES:
+            return
+
+        sched = _ensure_scheduler(task)
+        current_level = int(sched.get('escalationLevel') or 0)
+        next_level = min(current_level + 1, 2)
+        target = 'menxia' if next_level == 1 else 'shangshu'
+        target_label = '门下省' if next_level == 1 else '尚书省'
+        state_holder['target'] = target
+        state_holder['target_label'] = target_label
+        state_holder['next_level'] = next_level
+
+        sched['escalationLevel'] = next_level
+        sched['lastEscalatedAt'] = now_iso()
+        _scheduler_add_flow(task, f'升级到{target_label}协调：{reason or "任务停滞"}', to=target_label)
+        task['updatedAt'] = now_iso()
+
+    found, _, _ = modify_task(task_id, _apply)
+    task = state_holder['task']
+    state = state_holder['state']
+    target = state_holder['target']
+    target_label = state_holder['target_label']
+    next_level = state_holder['next_level']
+    if not found or not task:
         return {'ok': False, 'error': f'任务 {task_id} 不存在'}
-    state = task.get('state', '')
     if state in _TERMINAL_STATES:
         return {'ok': False, 'error': f'任务 {task_id} 已结束，无需升级'}
-
-    sched = _ensure_scheduler(task)
-    current_level = int(sched.get('escalationLevel') or 0)
-    next_level = min(current_level + 1, 2)
-    target = 'menxia' if next_level == 1 else 'shangshu'
-    target_label = '门下省' if next_level == 1 else '尚书省'
-
-    sched['escalationLevel'] = next_level
-    sched['lastEscalatedAt'] = now_iso()
-    _scheduler_add_flow(task, f'升级到{target_label}协调：{reason or "任务停滞"}', to=target_label)
-    task['updatedAt'] = now_iso()
-    save_tasks(tasks)
 
     msg = (
         f'🧭 太子调度升级通知\n'
@@ -1955,28 +2361,37 @@ def handle_scheduler_escalate(task_id, reason=''):
 
 
 def handle_scheduler_rollback(task_id, reason=''):
-    tasks = load_tasks()
-    task = next((t for t in tasks if t.get('id') == task_id), None)
-    if not task:
+    state_holder = {'task': None, 'snap_state': '', 'old_state': ''}
+
+    def _apply(task):
+        state_holder['task'] = task
+        sched = _ensure_scheduler(task)
+        snapshot = sched.get('snapshot') or {}
+        snap_state = snapshot.get('state')
+        state_holder['snap_state'] = snap_state or ''
+        if not snap_state:
+            return
+
+        old_state = task.get('state', '')
+        state_holder['old_state'] = old_state
+        task['state'] = snap_state
+        task['org'] = snapshot.get('org', task.get('org', ''))
+        task['now'] = f'↩️ 太子调度自动回滚：{reason or "恢复到上个稳定节点"}'
+        task['block'] = '无'
+        sched['retryCount'] = 0
+        sched['escalationLevel'] = 0
+        sched['stallSince'] = None
+        sched['lastProgressAt'] = now_iso()
+        _scheduler_add_flow(task, f'执行回滚：{old_state} → {snap_state}，原因：{reason or "停滞恢复"}')
+        task['updatedAt'] = now_iso()
+
+    found, _, _ = modify_task(task_id, _apply)
+    task = state_holder['task']
+    snap_state = state_holder['snap_state']
+    if not found or not task:
         return {'ok': False, 'error': f'任务 {task_id} 不存在'}
-    sched = _ensure_scheduler(task)
-    snapshot = sched.get('snapshot') or {}
-    snap_state = snapshot.get('state')
     if not snap_state:
         return {'ok': False, 'error': f'任务 {task_id} 无可用回滚快照'}
-
-    old_state = task.get('state', '')
-    task['state'] = snap_state
-    task['org'] = snapshot.get('org', task.get('org', ''))
-    task['now'] = f'↩️ 太子调度自动回滚：{reason or "恢复到上个稳定节点"}'
-    task['block'] = '无'
-    sched['retryCount'] = 0
-    sched['escalationLevel'] = 0
-    sched['stallSince'] = None
-    sched['lastProgressAt'] = now_iso()
-    _scheduler_add_flow(task, f'执行回滚：{old_state} → {snap_state}，原因：{reason or "停滞恢复"}')
-    task['updatedAt'] = now_iso()
-    save_tasks(tasks)
 
     if snap_state not in _TERMINAL_STATES:
         dispatch_for_state(task_id, task, snap_state, trigger='taizi-rollback')
@@ -2018,6 +2433,16 @@ def handle_scheduler_scan(threshold_sec=600):
         retry_count = int(sched.get('retryCount') or 0)
         max_retry = max(0, int(sched.get('maxRetry') or 1))
         level = int(sched.get('escalationLevel') or 0)
+
+        if state == 'Menxia' and _task_has_menxia_verdict(task):
+            sched['stallSince'] = None
+            sched['lastDispatchTrigger'] = 'taizi-scan-repeat-review-guard'
+            sched['lastDispatchStatus'] = 'suppressed-repeat-review-guard'
+            sched['lastDispatchAgent'] = 'menxia'
+            sched['lastDispatchError'] = '门下省重复送审保护：已存在明确审议结论，跳过巡检重试'
+            _scheduler_add_flow(task, f'停滞{stalled_sec}秒，但门下省已有明确审议结论，跳过自动重试', to='门下省')
+            changed = True
+            continue
 
         if retry_count < max_retry:
             sched['retryCount'] = retry_count + 1
@@ -2073,7 +2498,7 @@ def handle_scheduler_scan(threshold_sec=600):
                 changed = True
 
     if changed:
-        save_tasks(tasks)
+        modify_tasks(lambda current: tasks)
 
     for task_id, state in pending_retries:
         retry_task = next((t for t in tasks if t.get('id') == task_id), None)
@@ -2117,6 +2542,13 @@ def _startup_recover_queued_dispatches():
             continue
         sched = task.get('_scheduler') or {}
         if sched.get('lastDispatchStatus') == 'queued':
+            queued_agent = str(sched.get('lastDispatchAgent') or '').strip()
+            if queued_agent == 'shangshu':
+                log.warning(f'⚠️ 启动恢复跳过: {task_id} queued->shangshu 命中 main-session guard，避免重启后再次灌入 shangshu main')
+                sched['lastDispatchStatus'] = 'suppressed-main-session-guard'
+                sched['lastDispatchTrigger'] = 'startup-recovery'
+                sched['lastDispatchError'] = 'startup recovery suppressed: shangshu main session guard'
+                continue
             log.info(f'🔄 启动恢复: {task_id} 状态={state} 上次派发未完成，重新派发')
             sched['lastDispatchTrigger'] = 'startup-recovery'
             dispatch_for_state(task_id, task, state, trigger='startup-recovery')
@@ -2129,44 +2561,42 @@ def _startup_recover_queued_dispatches():
 
 def handle_repair_flow_order():
     """修复历史任务中首条流转为“皇上->中书省”的错序问题。"""
-    tasks = load_tasks()
-    fixed = 0
-    fixed_ids = []
+    state = {'fixed': 0, 'fixed_ids': []}
 
-    for task in tasks:
-        task_id = task.get('id', '')
-        if not task_id.startswith('JJC-'):
-            continue
-        flow_log = task.get('flow_log') or []
-        if not flow_log:
-            continue
+    def _repair(tasks):
+        for task in tasks:
+            task_id = task.get('id', '')
+            if not task_id.startswith('JJC-'):
+                continue
+            flow_log = task.get('flow_log') or []
+            if not flow_log:
+                continue
 
-        first = flow_log[0]
-        if first.get('from') != '皇上' or first.get('to') != '中书省':
-            continue
+            first = flow_log[0]
+            if first.get('from') != '皇上' or first.get('to') != '中书省':
+                continue
 
-        first['to'] = '太子'
-        remark = first.get('remark', '')
-        if isinstance(remark, str) and remark.startswith('下旨：'):
-            first['remark'] = remark
+            first['to'] = '太子'
+            remark = first.get('remark', '')
+            if isinstance(remark, str) and remark.startswith('下旨：'):
+                first['remark'] = remark
 
-        if task.get('state') == 'Zhongshu' and task.get('org') == '中书省' and len(flow_log) == 1:
-            task['state'] = 'Taizi'
-            task['org'] = '太子'
-            task['now'] = '等待太子接旨分拣'
+            if task.get('state') == 'Zhongshu' and task.get('org') == '中书省' and len(flow_log) == 1:
+                task['state'] = 'Taizi'
+                task['org'] = '太子'
+                task['now'] = '等待太子接旨分拣'
 
-        task['updatedAt'] = now_iso()
-        fixed += 1
-        fixed_ids.append(task_id)
+            task['updatedAt'] = now_iso()
+            state['fixed'] += 1
+            state['fixed_ids'].append(task_id)
 
-    if fixed:
-        save_tasks(tasks)
+    modify_tasks(_repair)
 
     return {
         'ok': True,
-        'count': fixed,
-        'taskIds': fixed_ids[:80],
-        'more': max(0, fixed - 80),
+        'count': state['fixed'],
+        'taskIds': state['fixed_ids'][:80],
+        'more': max(0, state['fixed'] - 80),
         'checkedAt': now_iso(),
     }
 
@@ -2818,9 +3248,12 @@ _STATE_LABELS = {
 def dispatch_for_state(task_id, task, new_state, trigger='state-transition'):
     """推进/审批后自动派发对应 Agent（后台异步，不阻塞响应）。"""
     agent_id = _STATE_AGENT_MAP.get(new_state)
+    target_dept = str(task.get('targetDept', '') or '').strip()
     if agent_id is None and new_state in ('Doing', 'Next'):
-        org = task.get('org', '')
+        org = str(task.get('org', '') or '').strip()
         agent_id = _ORG_AGENT_MAP.get(org)
+        if not agent_id and target_dept in _ORG_AGENT_MAP:
+            agent_id = _ORG_AGENT_MAP[target_dept]
     if not agent_id:
         log.info(f'ℹ️ {task_id} 新状态 {new_state} 无对应 Agent，跳过自动派发')
         return
@@ -2834,6 +3267,20 @@ def dispatch_for_state(task_id, task, new_state, trigger='state-transition'):
         }),
         _scheduler_add_flow(t, f'已入队派发：{new_state} → {agent_id}（{trigger}）', to=_STATE_LABELS.get(new_state, new_state))
     ))
+    if agent_id in ('taizi', 'shangshu'):
+        log.warning(f'⚠️ {task_id} 自动派发跳过: {agent_id} main 会话保护已生效，避免与 gateway 主会话重入冲突')
+        _update_task_scheduler(task_id, lambda t, s: s.update({
+            'lastDispatchAt': now_iso(),
+            'lastDispatchStatus': 'suppressed-main-session-guard',
+            'lastDispatchAgent': agent_id,
+            'lastDispatchTrigger': trigger,
+            'lastDispatchError': f'{agent_id} main 会话保护：dashboard 不再直接唤醒/派发 {agent_id} main',
+        }))
+        return
+    if agent_id == 'menxia' and _task_has_menxia_verdict(task):
+        log.warning(f'⚠️ {task_id} 自动派发跳过: 门下省重复送审保护已生效，避免重复进入 menxia main')
+        _suppress_menxia_repeat_review(task_id, trigger=trigger)
+        return
 
     title = task.get('title', '(无标题)')
     target_dept = task.get('targetDept', '')
@@ -2901,7 +3348,22 @@ def dispatch_for_state(task_id, task, new_state, trigger='state-transition'):
             # "unknown channel: feishu" 错误（非飞书用户）
             _agent_cfg = read_json(DATA / 'agent_config.json', {})
             _channel = (_agent_cfg.get('dispatchChannel') or '').strip()
-            cmd = ['openclaw', 'agent', '--agent', agent_id, '-m', msg, '--timeout', '300']
+            openclaw_bin = _resolve_openclaw_bin()
+            if not openclaw_bin:
+                err = 'OpenClaw CLI 未找到：请确认已安装 openclaw 并加入 PATH；Windows 可设置 OPENCLAW_BIN 指向 openclaw.cmd'
+                log.warning(f'⚠️ {task_id} 自动派发异常: {err}')
+                _update_task_scheduler(task_id, lambda t, s: (
+                    s.update({
+                        'lastDispatchAt': now_iso(),
+                        'lastDispatchStatus': 'cli-missing',
+                        'lastDispatchAgent': agent_id,
+                        'lastDispatchTrigger': trigger,
+                        'lastDispatchError': err,
+                    }),
+                    _scheduler_add_flow(t, f'派发异常：OpenClaw CLI 未找到（{trigger}）', to=t.get('org', ''))
+                ))
+                return
+            cmd = [openclaw_bin, 'agent', '--agent', agent_id, '-m', msg, '--timeout', '300']
             if _channel:
                 cmd.extend(['--deliver', '--channel', _channel])
             max_retries = 2
@@ -2969,31 +3431,40 @@ def dispatch_for_state(task_id, task, new_state, trigger='state-transition'):
 
 def handle_advance_state(task_id, comment=''):
     """手动推进任务到下一阶段（解卡用），推进后自动派发对应 Agent。"""
-    tasks = load_tasks()
-    task = next((t for t in tasks if t.get('id') == task_id), None)
-    if not task:
+    state_holder = {'task': None, 'cur': '', 'next_state': ''}
+
+    def _apply(task):
+        state_holder['task'] = task
+        cur = task.get('state', '')
+        state_holder['cur'] = cur
+        if cur not in _STATE_FLOW:
+            return
+        _ensure_scheduler(task)
+        _scheduler_snapshot(task, f'advance-before-{cur}')
+        next_state, from_dept, to_dept, default_remark = _STATE_FLOW[cur]
+        state_holder['next_state'] = next_state
+        remark = comment or default_remark
+
+        task['state'] = next_state
+        task['now'] = f'⬇️ 手动推进：{remark}'
+        task.setdefault('flow_log', []).append({
+            'at': now_iso(),
+            'from': from_dept,
+            'to': to_dept,
+            'remark': f'⬇️ 手动推进：{remark}'
+        })
+        _scheduler_mark_progress(task, f'手动推进 {cur} -> {next_state}')
+        task['updatedAt'] = now_iso()
+
+    found, _, _ = modify_task(task_id, _apply)
+    task = state_holder['task']
+    cur = state_holder['cur']
+    next_state = state_holder['next_state']
+    if not found or not task:
         return {'ok': False, 'error': f'任务 {task_id} 不存在'}
-    cur = task.get('state', '')
     if cur not in _STATE_FLOW:
         return {'ok': False, 'error': f'任务 {task_id} 状态为 {cur}，无法推进'}
-    _ensure_scheduler(task)
-    _scheduler_snapshot(task, f'advance-before-{cur}')
-    next_state, from_dept, to_dept, default_remark = _STATE_FLOW[cur]
-    remark = comment or default_remark
 
-    task['state'] = next_state
-    task['now'] = f'⬇️ 手动推进：{remark}'
-    task.setdefault('flow_log', []).append({
-        'at': now_iso(),
-        'from': from_dept,
-        'to': to_dept,
-        'remark': f'⬇️ 手动推进：{remark}'
-    })
-    _scheduler_mark_progress(task, f'手动推进 {cur} -> {next_state}')
-    task['updatedAt'] = now_iso()
-    save_tasks(tasks)
-
-    # 🚀 推进后自动派发对应 Agent（Done 状态无需派发）
     if next_state != 'Done':
         dispatch_for_state(task_id, task, next_state)
 
@@ -3001,6 +3472,79 @@ def handle_advance_state(task_id, comment=''):
     to_label = _STATE_LABELS.get(next_state, next_state)
     dispatched = ' (已自动派发 Agent)' if next_state != 'Done' else ''
     return {'ok': True, 'message': f'{task_id} {from_label} → {to_label}{dispatched}'}
+
+
+def handle_dispatch_task(task_id, target_dept, comment=''):
+    """显式把任务派到某个六部，避免只靠“推进下一步”隐式猜。"""
+    task_id = str(task_id or '').strip()
+    target_dept = str(target_dept or '').strip()
+    comment = str(comment or '').strip()
+
+    if not task_id:
+        return {'ok': False, 'error': 'taskId required'}
+    if target_dept not in _SIX_DEPTS:
+        return {'ok': False, 'error': f'targetDept must be one of: {" / ".join(_SIX_DEPTS)}'}
+
+    mode = _task_write_mode()
+    if mode in ('dual', 'api'):
+        backend_result = _dispatch_task_via_backend(task_id, target_dept, comment)
+        if backend_result.get('ok'):
+            return backend_result
+        log.warning(f'backend dispatch-task failed for {task_id}: {backend_result.get("error")}')
+        if mode == 'api':
+            return backend_result
+
+    state_holder = {'task': None, 'cur': ''}
+
+    def _apply(task):
+        state_holder['task'] = task
+        cur = str(task.get('state', '') or '').strip()
+        state_holder['cur'] = cur
+        if cur not in ('Assigned', 'Next', 'Doing'):
+            return
+
+        prev_org = str(task.get('org', '') or '').strip()
+        _ensure_scheduler(task)
+        _scheduler_snapshot(task, f'dispatch-before-{cur}')
+
+        task['targetDept'] = target_dept
+        task['org'] = target_dept
+        task['state'] = 'Doing'
+
+        if cur in ('Assigned', 'Next'):
+            from_dept = '尚书省'
+            default_remark = f'尚书省显式派发至{target_dept}'
+        else:
+            from_dept = prev_org if prev_org in _SIX_DEPTS else '尚书省'
+            default_remark = f'{target_dept}重新领办执行' if from_dept == target_dept else f'改派至{target_dept}继续执行'
+
+        remark = comment or default_remark
+        task['now'] = f'🎯 显式派发：{remark}'
+        task.setdefault('flow_log', []).append({
+            'at': now_iso(),
+            'from': from_dept,
+            'to': target_dept,
+            'remark': f'🎯 显式派发：{remark}'
+        })
+        _scheduler_mark_progress(task, f'显式派发到{target_dept}')
+        task['updatedAt'] = now_iso()
+
+    found, _, _ = modify_task(task_id, _apply)
+    task = state_holder['task']
+    cur = state_holder['cur']
+    if not found or not task:
+        return {'ok': False, 'error': f'任务 {task_id} 不存在'}
+    if cur not in ('Assigned', 'Next', 'Doing'):
+        return {'ok': False, 'error': f'任务 {task_id} 当前状态为 {cur}，不可显式派部'}
+
+    dispatch_for_state(task_id, task, 'Doing', trigger='manual-dispatch')
+    return {
+        'ok': True,
+        'message': f'{task_id} 已显式派给 {target_dept} 并进入执行',
+        'state': 'Doing',
+        'org': target_dept,
+        'targetDept': target_dept,
+    }
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -3511,6 +4055,17 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(result)
             return
 
+        if p == '/api/dispatch-task':
+            task_id = body.get('taskId', '').strip()
+            target_dept = body.get('targetDept', '').strip()
+            comment = body.get('comment', '').strip()
+            if not task_id or not target_dept:
+                self.send_json({'ok': False, 'error': 'taskId and targetDept required'}, 400)
+                return
+            result = handle_dispatch_task(task_id, target_dept, comment)
+            self.send_json(result)
+            return
+
         if p == '/api/agent-wake':
             agent_id = body.get('agentId', '').strip()
             message = body.get('message', '').strip()
@@ -3539,8 +4094,8 @@ class Handler(BaseHTTPRequestHandler):
             # Async apply
             def apply_async():
                 try:
-                    subprocess.run(['python3', str(SCRIPTS / 'apply_model_changes.py')], timeout=30)
-                    subprocess.run(['python3', str(SCRIPTS / 'sync_agent_config.py')], timeout=10)
+                    subprocess.run([python_bin(), str(SCRIPTS / 'apply_model_changes.py')], timeout=75)
+                    subprocess.run([python_bin(), str(SCRIPTS / 'sync_agent_config.py')], timeout=10)
                 except Exception as e:
                     print(f'[apply error] {e}', file=sys.stderr)
 
