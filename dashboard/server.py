@@ -11,7 +11,7 @@ Endpoints:
   GET  /api/model-change-log   → data/model_change_log.json
   GET  /api/last-result        → data/last_model_change_result.json
 """
-import json, pathlib, subprocess, sys, threading, argparse, datetime, logging, re, os, socket, shutil
+import json, pathlib, subprocess, sys, threading, argparse, datetime, logging, re, os, socket, shutil, copy
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, quote
 from urllib.request import Request, urlopen
@@ -581,100 +581,103 @@ def adopt_court_conclusion(session_id, apply=None, task_id=''):
     counts = {'tasks': 0, 'todos': 0, 'rules': 0, 'skipped': 0}
     adopted_keys = set((session.get('adopted') or {}).get('action_keys', []))
 
-    tasks = load_tasks()
-    target_task = next((t for t in tasks if t.get('id') == target_task_id), None) if target_task_id else None
+    state = {'target_task_found': not target_task_id}
 
-    for idx, action in enumerate(actions):
-        typ = str(action.get('type', 'todo')).lower()
-        key = f"{session_id}:{idx}:{typ}:{action.get('title') or action.get('content')}"
-        if key in adopted_keys:
-            counts['skipped'] += 1
-            continue
+    def _apply_tasks(tasks):
+        target_task = next((t for t in tasks if t.get('id') == target_task_id), None) if target_task_id else None
+        if target_task is not None:
+            state['target_task_found'] = True
 
-        if typ == 'todo' and apply.get('todos', True):
-            if not target_task:
+        for idx, action in enumerate(actions):
+            typ = str(action.get('type', 'todo')).lower()
+            key = f"{session_id}:{idx}:{typ}:{action.get('title') or action.get('content')}"
+            if key in adopted_keys:
                 counts['skipped'] += 1
                 continue
-            todos = target_task.setdefault('todos', [])
-            todo_id = f'court-{session_id}-{idx}'
-            if any(str(td.get('id')) == todo_id for td in todos):
-                counts['skipped'] += 1
-                continue
-            item = {
-                'id': todo_id,
-                'title': action.get('title') or action.get('content'),
-                'status': 'not-started',
-                'detail': action.get('content') or action.get('reason') or '',
-                'source': 'court_discuss',
-                'sessionId': session_id,
-                'owner': action.get('owner', ''),
-                'priority': action.get('priority', 'normal'),
-            }
-            if action.get('acceptance'):
-                item['acceptance'] = action.get('acceptance')
-            todos.append(item)
-            target_task['updatedAt'] = now_iso()
-            counts['todos'] += 1
-            adopted_keys.add(key)
 
-        elif typ == 'task' and apply.get('tasks', True):
-            new_id = f'COURT-{session_id}-{idx}'
-            if any(t.get('id') == new_id for t in tasks):
-                counts['skipped'] += 1
-                continue
-            tasks.insert(0, {
-                'id': new_id,
-                'title': action.get('title') or action.get('content'),
-                'state': 'Pending',
-                'org': action.get('owner') or '尚书省',
-                'official': action.get('owner', ''),
-                'now': action.get('reason') or '由朝堂议政结论生成',
-                'eta': '-',
-                'block': '无',
-                'output': '',
-                'ac': action.get('acceptance', ''),
-                'source': 'court_discuss',
-                'sourceSessionId': session_id,
-                'flow_log': [{
-                    'at': now_iso(),
-                    'from': '朝堂议政',
-                    'to': action.get('owner') or '尚书省',
-                    'remark': action.get('reason') or '采纳议政结论',
-                }],
-                'todos': [],
-                'updatedAt': now_iso(),
-            })
-            counts['tasks'] += 1
-            adopted_keys.add(key)
+            if typ == 'todo' and apply.get('todos', True):
+                if not target_task:
+                    counts['skipped'] += 1
+                    continue
+                todos = target_task.setdefault('todos', [])
+                todo_id = f'court-{session_id}-{idx}'
+                if any(str(td.get('id')) == todo_id for td in todos):
+                    counts['skipped'] += 1
+                    continue
+                item = {
+                    'id': todo_id,
+                    'title': action.get('title') or action.get('content'),
+                    'status': 'not-started',
+                    'detail': action.get('content') or action.get('reason') or '',
+                    'source': 'court_discuss',
+                    'sessionId': session_id,
+                    'owner': action.get('owner', ''),
+                    'priority': action.get('priority', 'normal'),
+                }
+                if action.get('acceptance'):
+                    item['acceptance'] = action.get('acceptance')
+                todos.append(item)
+                target_task['updatedAt'] = now_iso()
+                counts['todos'] += 1
+                adopted_keys.add(key)
 
-        elif typ == 'rule' and apply.get('rules', True):
-            shared_file = get_task_data_dir() / 'shared_memory.json'
-            content = action.get('content') or action.get('title')
-
-            def _add_rule(data):
-                if not isinstance(data, dict):
-                    data = {'rules': []}
-                rules = data.setdefault('rules', [])
-                if any(r.get('content') == content and r.get('sourceSessionId') == session_id for r in rules):
-                    return data
-                rules.append({
-                    'content': content,
-                    'added_by': 'court_discuss',
-                    'at': now_iso(),
+            elif typ == 'task' and apply.get('tasks', True):
+                new_id = f'COURT-{session_id}-{idx}'
+                if any(t.get('id') == new_id for t in tasks):
+                    counts['skipped'] += 1
+                    continue
+                tasks.insert(0, {
+                    'id': new_id,
+                    'title': action.get('title') or action.get('content'),
+                    'state': 'Pending',
+                    'org': action.get('owner') or '尚书省',
+                    'official': action.get('owner', ''),
+                    'now': action.get('reason') or '由朝堂议政结论生成',
+                    'eta': '-',
+                    'block': '无',
+                    'output': '',
+                    'ac': action.get('acceptance', ''),
+                    'source': 'court_discuss',
                     'sourceSessionId': session_id,
-                    'scope': action.get('scope', 'global'),
-                    'reason': action.get('reason', ''),
+                    'flow_log': [{
+                        'at': now_iso(),
+                        'from': '朝堂议政',
+                        'to': action.get('owner') or '尚书省',
+                        'remark': action.get('reason') or '采纳议政结论',
+                    }],
+                    'todos': [],
+                    'updatedAt': now_iso(),
                 })
-                return data
+                counts['tasks'] += 1
+                adopted_keys.add(key)
 
-            atomic_json_update(shared_file, _add_rule, {'rules': []})
-            counts['rules'] += 1
-            adopted_keys.add(key)
-        else:
-            counts['skipped'] += 1
+            elif typ == 'rule' and apply.get('rules', True):
+                shared_file = get_task_data_dir() / 'shared_memory.json'
+                content = action.get('content') or action.get('title')
 
-    if counts['tasks'] or counts['todos']:
-        save_tasks(tasks)
+                def _add_rule(data):
+                    if not isinstance(data, dict):
+                        data = {'rules': []}
+                    rules = data.setdefault('rules', [])
+                    if any(r.get('content') == content and r.get('sourceSessionId') == session_id for r in rules):
+                        return data
+                    rules.append({
+                        'content': content,
+                        'added_by': 'court_discuss',
+                        'at': now_iso(),
+                        'sourceSessionId': session_id,
+                        'scope': action.get('scope', 'global'),
+                        'reason': action.get('reason', ''),
+                    })
+                    return data
+
+                atomic_json_update(shared_file, _add_rule, {'rules': []})
+                counts['rules'] += 1
+                adopted_keys.add(key)
+            else:
+                counts['skipped'] += 1
+
+    modify_tasks(_apply_tasks)
 
     try:
         import court_discuss as _cd
@@ -684,7 +687,13 @@ def adopt_court_conclusion(session_id, apply=None, task_id=''):
     except Exception:
         pass
 
-    return {'ok': True, 'sessionId': session_id, 'taskId': target_task_id, 'counts': counts}
+    return {
+        'ok': True,
+        'sessionId': session_id,
+        'taskId': target_task_id,
+        'counts': counts,
+        'targetTaskFound': state['target_task_found'],
+    }
 
 
 def read_skill_content(agent_id, skill_name):
@@ -2530,29 +2539,49 @@ def handle_scheduler_scan(threshold_sec=600):
     }
 
 
-def _startup_recover_queued_dispatches():
-    """服务启动后扫描 lastDispatchStatus=queued 的任务，重新派发。
-    解决：kill -9 重启导致派发线程中断、任务永久卡住的问题。"""
-    tasks = load_tasks()
-    recovered = 0
+def _startup_collect_recoverable_dispatches(tasks):
+    recoverable = []
     for task in tasks:
         task_id = task.get('id', '')
         state = task.get('state', '')
         if not task_id or state in _TERMINAL_STATES or task.get('archived'):
             continue
         sched = task.get('_scheduler') or {}
-        if sched.get('lastDispatchStatus') == 'queued':
-            queued_agent = str(sched.get('lastDispatchAgent') or '').strip()
-            if queued_agent == 'shangshu':
-                log.warning(f'⚠️ 启动恢复跳过: {task_id} queued->shangshu 命中 main-session guard，避免重启后再次灌入 shangshu main')
-                sched['lastDispatchStatus'] = 'suppressed-main-session-guard'
-                sched['lastDispatchTrigger'] = 'startup-recovery'
-                sched['lastDispatchError'] = 'startup recovery suppressed: shangshu main session guard'
-                continue
-            log.info(f'🔄 启动恢复: {task_id} 状态={state} 上次派发未完成，重新派发')
+        if sched.get('lastDispatchStatus') != 'queued':
+            continue
+        queued_agent = str(sched.get('lastDispatchAgent') or '').strip()
+        if queued_agent == 'shangshu':
+            log.warning(f'⚠️ 启动恢复跳过: {task_id} queued->shangshu 命中 main-session guard，避免重启后再次灌入 shangshu main')
+            sched['lastDispatchStatus'] = 'suppressed-main-session-guard'
             sched['lastDispatchTrigger'] = 'startup-recovery'
-            dispatch_for_state(task_id, task, state, trigger='startup-recovery')
-            recovered += 1
+            sched['lastDispatchError'] = 'startup recovery suppressed: shangshu main session guard'
+            task['updatedAt'] = now_iso()
+            continue
+        log.info(f'🔄 启动恢复: {task_id} 状态={state} 上次派发未完成，准备重新派发')
+        sched['lastDispatchTrigger'] = 'startup-recovery'
+        task['updatedAt'] = now_iso()
+        recoverable.append({
+            'task_id': task_id,
+            'state': state,
+            'snapshot': copy.deepcopy(task),
+        })
+    return recoverable
+
+
+def _startup_recover_queued_dispatches():
+    """服务启动后扫描 lastDispatchStatus=queued 的任务，重新派发。
+    解决：kill -9 重启导致派发线程中断、任务永久卡住的问题。"""
+    recovery = {'items': []}
+
+    def _repair(tasks):
+        recovery['items'] = _startup_collect_recoverable_dispatches(tasks)
+
+    modify_tasks(_repair)
+
+    recovered = 0
+    for item in recovery['items']:
+        dispatch_for_state(item['task_id'], item['snapshot'], item['state'], trigger='startup-recovery')
+        recovered += 1
     if recovered:
         log.info(f'✅ 启动恢复完成: 重新派发 {recovered} 个任务')
     else:

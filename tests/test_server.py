@@ -459,6 +459,59 @@ def test_save_tasks_sends_pending_confirm_notification_once(tmp_path, monkeypatc
     assert len(sent) == 1
 
 
+
+def test_save_tasks_syncs_governance_samples_after_write(tmp_path, monkeypatch):
+    data_dir = tmp_path / 'data'
+    data_dir.mkdir()
+    (data_dir / 'tasks_runtime_view.json').write_text('[]', encoding='utf-8')
+    (data_dir / 'mission_control_tasks.json').write_text('[]', encoding='utf-8')
+    (data_dir / 'manual_parallel_tasks.json').write_text('[]', encoding='utf-8')
+
+    import server as srv
+    srv.DATA = data_dir
+    srv._ACTIVE_TASK_DATA_DIR = None
+
+    real_run = srv.subprocess.run
+
+    class DummyThread:
+        def __init__(self, target=None, daemon=None):
+            self.target = target
+            self.daemon = daemon
+
+        def start(self):
+            return None
+
+    def fake_run(cmd, timeout=None, **kwargs):
+        if isinstance(cmd, list) and len(cmd) >= 2 and str(cmd[1]).endswith('sync_governance_samples.py'):
+            return real_run(cmd, timeout=timeout, **kwargs)
+        return type('Completed', (), {'returncode': 0})()
+
+    monkeypatch.setattr(srv.subprocess, 'run', fake_run)
+    monkeypatch.setattr(srv.threading, 'Thread', DummyThread)
+
+    tasks = [{
+        'id': 'TEST-SYNC-GOV-SAMPLES',
+        'title': '样本同步测试',
+        'state': 'PendingConfirm',
+        'pending_confirm': {
+            'target_state': 'Done',
+            'requested_at': '2026-04-26T00:00:00Z',
+        },
+        'gate_checks': [{'result': 'pending'}],
+        'updatedAt': '2026-04-26T01:00:00Z',
+    }]
+
+    srv.save_tasks(tasks)
+
+    payload = json.loads((data_dir / 'tasks_governance_samples.json').read_text(encoding='utf-8'))
+    item = next(entry for entry in payload if entry['id'] == 'TEST-SYNC-GOV-SAMPLES')
+    assert item['sourceLayer'] == 'governance_sample'
+    assert item['pending_confirm']['target_state'] == 'Done'
+    assert item['gate_checks'][0]['result'] == 'pending'
+    assert 'legacy_tasks_source' in item['sampleSources']
+
+
+
 def test_review_action_approve_pending_confirm_sends_approval_notification(tmp_path, monkeypatch):
     data_dir = tmp_path / 'data'
     data_dir.mkdir()
@@ -713,6 +766,548 @@ def test_task_command_panel_route_returns_scheduler_actions(tmp_path):
     assert actions['autopsy']['api'] == '/api/task-autopsy'
 
     httpd.server_close()
+
+
+def test_handle_scheduler_scan_retries_stalled_task_and_records_trigger(tmp_path):
+    data_dir = tmp_path / 'data'
+    data_dir.mkdir()
+    (data_dir / 'tasks_source.json').write_text(json.dumps([{
+        'id': 'TEST-SCHED-SCAN-RETRY',
+        'title': '巡检重试样本',
+        'state': 'Doing',
+        'org': '工部',
+        'updatedAt': '2026-04-17T00:00:00Z',
+        '_scheduler': {
+            'enabled': True,
+            'stallThresholdSec': 180,
+            'maxRetry': 1,
+            'retryCount': 0,
+            'escalationLevel': 0,
+            'autoRollback': True,
+            'lastProgressAt': '2026-04-17T00:00:00Z',
+            'stallSince': None,
+            'lastDispatchStatus': 'idle',
+            'snapshot': {'state': 'Doing', 'org': '工部', 'now': '巡检重试样本', 'savedAt': '2026-04-17T00:00:00Z', 'note': 'init'}
+        },
+    }], ensure_ascii=False), encoding='utf-8')
+
+    import server as srv
+    srv.DATA = data_dir
+    srv._ACTIVE_TASK_DATA_DIR = None
+
+    called = []
+    old_dispatch = srv.dispatch_for_state
+    try:
+        srv.dispatch_for_state = lambda task_id, task, state, trigger='state-transition': called.append({
+            'task_id': task_id,
+            'state': state,
+            'trigger': trigger,
+        })
+
+        result = srv.handle_scheduler_scan(180)
+        saved = json.loads((data_dir / 'tasks_source.json').read_text(encoding='utf-8'))[0]
+    finally:
+        srv.dispatch_for_state = old_dispatch
+
+    assert result['ok'] is True
+    assert result['count'] == 1
+    assert result['actions'][0]['taskId'] == 'TEST-SCHED-SCAN-RETRY'
+    assert result['actions'][0]['action'] == 'retry'
+    assert called == [{
+        'task_id': 'TEST-SCHED-SCAN-RETRY',
+        'state': 'Doing',
+        'trigger': 'taizi-scan-retry',
+    }]
+    assert saved['_scheduler']['retryCount'] == 1
+    assert saved['_scheduler']['lastDispatchTrigger'] == 'taizi-scan-retry'
+    assert saved['_scheduler']['stallSince'] is not None
+    assert '停滞' in saved['flow_log'][-1]['remark']
+
+
+def test_dispatch_for_state_falls_back_to_target_dept_when_org_is_generic(tmp_path, monkeypatch):
+    data_dir = tmp_path / 'data'
+    data_dir.mkdir()
+    (data_dir / 'tasks_source.json').write_text(json.dumps([{
+        'id': 'TEST-DISPATCH-TARGETDEPT-1',
+        'title': '按模板建议派工',
+        'state': 'Doing',
+        'org': '执行中',
+        'targetDept': '工部',
+        'updatedAt': '2026-04-17T00:00:00Z',
+        '_scheduler': {
+            'enabled': True,
+            'stallThresholdSec': 180,
+            'maxRetry': 1,
+            'retryCount': 0,
+            'escalationLevel': 0,
+            'autoRollback': True,
+            'lastProgressAt': '2026-04-17T00:00:00Z',
+            'stallSince': None,
+            'lastDispatchStatus': 'idle',
+            'snapshot': {'state': 'Doing', 'org': '执行中', 'now': '待派发', 'savedAt': '2026-04-17T00:00:00Z', 'note': 'init'}
+        },
+    }], ensure_ascii=False), encoding='utf-8')
+
+    import server as srv
+    srv.DATA = data_dir
+    srv._ACTIVE_TASK_DATA_DIR = None
+
+    monkeypatch.setattr(srv, '_check_gateway_alive', lambda: False)
+
+    class InlineThread:
+        def __init__(self, target=None, daemon=None, args=(), kwargs=None):
+            self.target = target
+            self.args = args
+            self.kwargs = kwargs or {}
+        def start(self):
+            if self.target:
+                self.target(*self.args, **self.kwargs)
+
+    monkeypatch.setattr(srv.threading, 'Thread', InlineThread)
+
+    task = json.loads((data_dir / 'tasks_source.json').read_text(encoding='utf-8'))[0]
+    srv.dispatch_for_state('TEST-DISPATCH-TARGETDEPT-1', task, 'Doing', trigger='unit-test')
+    saved = json.loads((data_dir / 'tasks_source.json').read_text(encoding='utf-8'))[0]
+
+    assert saved['_scheduler']['lastDispatchAgent'] == 'gongbu'
+    assert saved['_scheduler']['lastDispatchTrigger'] == 'unit-test'
+    assert saved['_scheduler']['lastDispatchStatus'] == 'gateway-offline'
+
+
+def test_dispatch_for_state_suppresses_taizi_main_session_auto_dispatch(tmp_path, monkeypatch):
+    data_dir = tmp_path / 'data'
+    data_dir.mkdir()
+    (data_dir / 'tasks_source.json').write_text(json.dumps([{
+        'id': 'TEST-TAIZI-AUTO-DISPATCH-1',
+        'title': '太子主会话保护',
+        'state': 'Taizi',
+        'org': '太子',
+        'updatedAt': '2026-04-17T00:00:00Z',
+        '_scheduler': {
+            'enabled': True,
+            'stallThresholdSec': 180,
+            'maxRetry': 1,
+            'retryCount': 0,
+            'escalationLevel': 0,
+            'autoRollback': True,
+            'lastProgressAt': '2026-04-17T00:00:00Z',
+            'stallSince': None,
+            'lastDispatchStatus': 'idle',
+            'snapshot': {'state': 'Taizi', 'org': '太子', 'now': '待储君处理', 'savedAt': '2026-04-17T00:00:00Z', 'note': 'init'}
+        },
+    }], ensure_ascii=False), encoding='utf-8')
+
+    import server as srv
+    srv.DATA = data_dir
+    srv._ACTIVE_TASK_DATA_DIR = None
+
+    run_calls = []
+    monkeypatch.setattr(srv.subprocess, 'run', lambda *args, **kwargs: run_calls.append((args, kwargs)))
+
+    task = json.loads((data_dir / 'tasks_source.json').read_text(encoding='utf-8'))[0]
+    srv.dispatch_for_state('TEST-TAIZI-AUTO-DISPATCH-1', task, 'Taizi', trigger='unit-test')
+    saved = json.loads((data_dir / 'tasks_source.json').read_text(encoding='utf-8'))[0]
+
+    assert not any(args and args[0] and args[0][0] == 'openclaw' for args, kwargs in run_calls)
+    assert saved['_scheduler']['lastDispatchAgent'] == 'taizi'
+    assert saved['_scheduler']['lastDispatchTrigger'] == 'unit-test'
+    assert saved['_scheduler']['lastDispatchStatus'] == 'suppressed-main-session-guard'
+    assert 'taizi main 会话保护' in saved['_scheduler']['lastDispatchError']
+
+
+def test_wake_agent_suppresses_taizi_main_session_wake(monkeypatch):
+    import server as srv
+
+    monkeypatch.setattr(srv, '_check_agent_workspace', lambda agent_id: True)
+    monkeypatch.setattr(srv, '_check_gateway_alive', lambda: True)
+
+    run_calls = []
+    monkeypatch.setattr(srv.subprocess, 'run', lambda *args, **kwargs: run_calls.append((args, kwargs)))
+
+    result = srv.wake_agent('taizi', 'ping')
+
+    assert result['ok'] is True
+    assert '已跳过' in result['message']
+    assert 'main 会话保护' in result['message']
+    assert run_calls == []
+
+
+def test_dispatch_for_state_suppresses_menxia_repeat_review_dispatch(tmp_path, monkeypatch):
+    data_dir = tmp_path / 'data'
+    data_dir.mkdir()
+    (data_dir / 'tasks_source.json').write_text(json.dumps([{
+        'id': 'TEST-MENXIA-AUTO-DISPATCH-1',
+        'title': '门下省重复送审保护',
+        'state': 'Menxia',
+        'org': '门下省',
+        'now': '等待门下省审议',
+        'block': '无',
+        'updatedAt': '2026-04-17T00:00:00Z',
+        'flow_log': [
+            {'from': '中书省', 'to': '门下省', 'remark': '中书省方案提交门下省审议', 'at': '2026-04-17T00:00:00Z'},
+            {'from': '门下省', 'to': '门下省', 'remark': '门下省已封驳：方案正文缺失，请补齐后再报', 'at': '2026-04-17T00:03:00Z'},
+        ],
+        'progress_log': [
+            {'text': '结论：封驳；当前送审内容仍仅含任务ID与旨意，未附中书省方案正文'}
+        ],
+        '_scheduler': {
+            'enabled': True,
+            'stallThresholdSec': 180,
+            'maxRetry': 1,
+            'retryCount': 0,
+            'escalationLevel': 0,
+            'autoRollback': True,
+            'lastProgressAt': '2026-04-17T00:03:00Z',
+            'stallSince': None,
+            'lastDispatchStatus': 'idle',
+            'snapshot': {'state': 'Menxia', 'org': '门下省', 'now': '等待门下省审议', 'savedAt': '2026-04-17T00:00:00Z', 'note': 'init'}
+        },
+    }], ensure_ascii=False), encoding='utf-8')
+
+    import server as srv
+    srv.DATA = data_dir
+    srv._ACTIVE_TASK_DATA_DIR = None
+
+    run_calls = []
+    monkeypatch.setattr(srv.subprocess, 'run', lambda *args, **kwargs: run_calls.append((args, kwargs)))
+
+    task = json.loads((data_dir / 'tasks_source.json').read_text(encoding='utf-8'))[0]
+    srv.dispatch_for_state('TEST-MENXIA-AUTO-DISPATCH-1', task, 'Menxia', trigger='unit-test')
+    saved = json.loads((data_dir / 'tasks_source.json').read_text(encoding='utf-8'))[0]
+
+    assert not any(args and args[0] and args[0][0] == 'openclaw' for args, kwargs in run_calls)
+    assert saved['_scheduler']['lastDispatchAgent'] == 'menxia'
+    assert saved['_scheduler']['lastDispatchTrigger'] == 'unit-test'
+    assert saved['_scheduler']['lastDispatchStatus'] == 'suppressed-repeat-review-guard'
+    assert '门下省重复送审保护' in saved['_scheduler']['lastDispatchError']
+
+
+def test_scheduler_scan_skips_retry_for_menxia_task_with_existing_verdict(tmp_path, monkeypatch):
+    data_dir = tmp_path / 'data'
+    data_dir.mkdir()
+    (data_dir / 'tasks_source.json').write_text(json.dumps([{
+        'id': 'TEST-SCHED-MENXIA-RETRY-1',
+        'title': '门下省已出结论不应重试',
+        'state': 'Menxia',
+        'org': '门下省',
+        'now': '等待门下省审议',
+        'updatedAt': '2026-04-17T00:00:00Z',
+        'flow_log': [
+            {'from': '中书省', 'to': '门下省', 'remark': '中书省方案提交门下省审议', 'at': '2026-04-17T00:00:00Z'},
+            {'from': '门下省', 'to': '门下省', 'remark': '门下省已准奏：允许进入尚书省派发', 'at': '2026-04-17T00:04:00Z'},
+        ],
+        'progress_log': [
+            {'text': '结论：准奏；允许转尚书省派发执行'}
+        ],
+        '_scheduler': {
+            'enabled': True,
+            'stallThresholdSec': 180,
+            'maxRetry': 1,
+            'retryCount': 0,
+            'escalationLevel': 0,
+            'autoRollback': True,
+            'lastProgressAt': '2026-04-17T00:00:00Z',
+            'stallSince': None,
+            'lastDispatchStatus': 'idle',
+            'snapshot': {'state': 'Menxia', 'org': '门下省', 'now': '等待门下省审议', 'savedAt': '2026-04-17T00:00:00Z', 'note': 'init'}
+        },
+    }], ensure_ascii=False), encoding='utf-8')
+    (data_dir / 'tasks_governance_samples.json').write_text('[]', encoding='utf-8')
+
+    import server as srv
+    srv.DATA = data_dir
+    srv._ACTIVE_TASK_DATA_DIR = None
+
+    called = []
+    old_dispatch = srv.dispatch_for_state
+    try:
+        srv.dispatch_for_state = lambda task_id, task, state, trigger='state-transition': called.append({
+            'task_id': task_id,
+            'state': state,
+            'trigger': trigger,
+        })
+        result = srv.handle_scheduler_scan(180)
+        saved = json.loads((data_dir / 'tasks_source.json').read_text(encoding='utf-8'))[0]
+    finally:
+        srv.dispatch_for_state = old_dispatch
+
+    assert result['ok'] is True
+    assert result['count'] == 0
+    assert called == []
+    assert saved['_scheduler']['retryCount'] == 0
+    assert saved['_scheduler']['lastDispatchStatus'] == 'suppressed-repeat-review-guard'
+    assert '门下省重复送审保护' in saved['_scheduler']['lastDispatchError']
+
+
+def test_dispatch_for_state_suppresses_menxia_when_verdict_exists_only_in_governance_sample(tmp_path, monkeypatch):
+    data_dir = tmp_path / 'data'
+    data_dir.mkdir()
+    (data_dir / 'tasks_source.json').write_text(json.dumps([{
+        'id': 'TEST-MENXIA-SAMPLE-GUARD-1',
+        'title': '样本层门下结论保护',
+        'state': 'Menxia',
+        'org': '门下省',
+        'now': '等待门下省审议',
+        'block': '无',
+        'updatedAt': '2026-04-17T00:00:00Z',
+        'flow_log': [
+            {'from': '中书省', 'to': '门下省', 'remark': '中书省方案提交门下省审议', 'at': '2026-04-17T00:00:00Z'}
+        ],
+        'progress_log': [],
+        '_scheduler': {
+            'enabled': True,
+            'stallThresholdSec': 180,
+            'maxRetry': 1,
+            'retryCount': 0,
+            'escalationLevel': 0,
+            'autoRollback': True,
+            'lastProgressAt': '2026-04-17T00:03:00Z',
+            'stallSince': None,
+            'lastDispatchStatus': 'idle',
+            'snapshot': {'state': 'Menxia', 'org': '门下省', 'now': '等待门下省审议', 'savedAt': '2026-04-17T00:00:00Z', 'note': 'init'}
+        },
+    }], ensure_ascii=False), encoding='utf-8')
+    (data_dir / 'tasks_governance_samples.json').write_text(json.dumps([{
+        'id': 'TEST-MENXIA-SAMPLE-GUARD-1',
+        'task_id': 'TEST-MENXIA-SAMPLE-GUARD-1',
+        'org': '门下省',
+        'flow_log': [
+            {'from': '门下省', 'to': '中书省', 'remark': '❌ 封驳：未附中书省方案正文，无法审议'}
+        ],
+        'progress_log': [
+            {'text': '审议完成，封驳：要求补齐方案正文后再报'}
+        ]
+    }], ensure_ascii=False), encoding='utf-8')
+
+    import server as srv
+    srv.DATA = data_dir
+    srv._ACTIVE_TASK_DATA_DIR = None
+
+    run_calls = []
+    monkeypatch.setattr(srv.subprocess, 'run', lambda *args, **kwargs: run_calls.append((args, kwargs)))
+
+    task = json.loads((data_dir / 'tasks_source.json').read_text(encoding='utf-8'))[0]
+    srv.dispatch_for_state('TEST-MENXIA-SAMPLE-GUARD-1', task, 'Menxia', trigger='unit-test')
+    saved = json.loads((data_dir / 'tasks_source.json').read_text(encoding='utf-8'))[0]
+
+    assert not any(args and args[0] and args[0][0] == 'openclaw' for args, kwargs in run_calls)
+    assert saved['_scheduler']['lastDispatchStatus'] == 'suppressed-repeat-review-guard'
+    assert '门下省重复送审保护' in saved['_scheduler']['lastDispatchError']
+    assert saved['now'] == '门下省已封驳，等待中书省补正文后再报'
+    assert '未附中书省方案正文' in saved['block']
+    assert any('已跳过重复送审' in str(item.get('content', '')) for item in saved['progress_log'])
+
+
+def test_handle_dispatch_task_explicitly_assigns_six_department_and_dispatches(tmp_path, monkeypatch):
+    data_dir = tmp_path / 'data'
+    data_dir.mkdir()
+    (data_dir / 'tasks_source.json').write_text(json.dumps([{
+        'id': 'TEST-MANUAL-DISPATCH-1',
+        'title': '手动显式派部',
+        'state': 'Assigned',
+        'org': '尚书省',
+        'now': '等待尚书省派发',
+        'updatedAt': '2026-04-17T00:00:00Z',
+        '_scheduler': {
+            'enabled': True,
+            'stallThresholdSec': 180,
+            'maxRetry': 1,
+            'retryCount': 0,
+            'escalationLevel': 0,
+            'autoRollback': True,
+            'lastProgressAt': '2026-04-17T00:00:00Z',
+            'stallSince': None,
+            'lastDispatchStatus': 'idle',
+            'snapshot': {'state': 'Assigned', 'org': '尚书省', 'now': '等待尚书省派发', 'savedAt': '2026-04-17T00:00:00Z', 'note': 'init'}
+        },
+    }], ensure_ascii=False), encoding='utf-8')
+
+    import server as srv
+    srv.DATA = data_dir
+    srv._ACTIVE_TASK_DATA_DIR = None
+
+    monkeypatch.setattr(srv, '_check_gateway_alive', lambda: False)
+
+    class InlineThread:
+        def __init__(self, target=None, daemon=None, args=(), kwargs=None):
+            self.target = target
+            self.args = args
+            self.kwargs = kwargs or {}
+        def start(self):
+            if self.target:
+                self.target(*self.args, **self.kwargs)
+
+    monkeypatch.setattr(srv.threading, 'Thread', InlineThread)
+
+    result = srv.handle_dispatch_task('TEST-MANUAL-DISPATCH-1', '工部', '改由工部执行')
+    saved = json.loads((data_dir / 'tasks_source.json').read_text(encoding='utf-8'))[0]
+
+    assert result['ok'] is True
+    assert saved['state'] == 'Doing'
+    assert saved['org'] == '工部'
+    assert saved['targetDept'] == '工部'
+    assert '改由工部执行' in saved['now']
+    explicit_flow = next(item for item in saved['flow_log'] if item.get('from') == '尚书省' and item.get('to') == '工部' and '显式派发' in item.get('remark', ''))
+    assert explicit_flow['from'] == '尚书省'
+    assert explicit_flow['to'] == '工部'
+    assert saved['_scheduler']['lastDispatchAgent'] == 'gongbu'
+    assert saved['_scheduler']['lastDispatchTrigger'] == 'manual-dispatch'
+    assert saved['_scheduler']['lastDispatchStatus'] == 'gateway-offline'
+
+
+def test_handle_dispatch_task_rejects_non_dispatchable_state(tmp_path):
+    data_dir = tmp_path / 'data'
+    data_dir.mkdir()
+    (data_dir / 'tasks_source.json').write_text(json.dumps([{
+        'id': 'TEST-MANUAL-DISPATCH-REJECT',
+        'title': '审查态不可派部',
+        'state': 'Review',
+        'org': '尚书省',
+    }], ensure_ascii=False), encoding='utf-8')
+
+    import server as srv
+    srv.DATA = data_dir
+    srv._ACTIVE_TASK_DATA_DIR = None
+
+    result = srv.handle_dispatch_task('TEST-MANUAL-DISPATCH-REJECT', '工部', '')
+    assert result['ok'] is False
+    assert '不可显式派部' in result['error']
+
+
+def test_handle_dispatch_task_dual_mode_uses_backend_without_local_json(monkeypatch):
+    import server as srv
+
+    monkeypatch.setattr(srv, 'TASK_WRITE_MODE', 'dual', raising=False)
+    monkeypatch.setattr(
+        srv,
+        '_dispatch_task_via_backend',
+        lambda task_id, target_dept, comment='': {
+            'ok': True,
+            'message': 'backend dispatch ok',
+            'state': 'Doing',
+            'org': '工部',
+            'targetDept': '工部',
+        },
+        raising=False,
+    )
+    save_calls = []
+    monkeypatch.setattr(srv, 'save_tasks', lambda tasks: save_calls.append(tasks))
+    monkeypatch.setattr(srv, 'load_tasks', lambda: [{'id': 'TEST-MANUAL-DISPATCH-1', 'state': 'Assigned', 'org': '尚书省'}])
+
+    result = srv.handle_dispatch_task('TEST-MANUAL-DISPATCH-1', '工部', '改由工部执行')
+
+    assert result['ok'] is True
+    assert result['message'] == 'backend dispatch ok'
+    assert save_calls == []
+
+
+def test_handle_dispatch_task_dual_mode_falls_back_to_legacy_when_backend_fails(monkeypatch):
+    import server as srv
+
+    monkeypatch.setattr(srv, 'TASK_WRITE_MODE', 'dual', raising=False)
+    monkeypatch.setattr(
+        srv,
+        '_dispatch_task_via_backend',
+        lambda task_id, target_dept, comment='': {'ok': False, 'error': 'backend unavailable'},
+        raising=False,
+    )
+
+    saved = []
+    dispatched = []
+    monkeypatch.setattr(srv, 'save_tasks', lambda tasks: saved.append(tasks))
+    monkeypatch.setattr(
+        srv,
+        'dispatch_for_state',
+        lambda task_id, task, state, trigger='state-transition': dispatched.append({
+            'task_id': task_id,
+            'state': state,
+            'trigger': trigger,
+            'task': task,
+        }),
+    )
+    monkeypatch.setattr(srv, 'load_tasks', lambda: [{'id': 'TEST-MANUAL-DISPATCH-2', 'state': 'Assigned', 'org': '尚书省'}])
+
+    result = srv.handle_dispatch_task('TEST-MANUAL-DISPATCH-2', '工部', '改由工部执行')
+
+    assert result['ok'] is True
+    assert saved and saved[0][0]['state'] == 'Doing'
+    assert saved[0][0]['targetDept'] == '工部'
+    assert dispatched and dispatched[0]['task_id'] == 'TEST-MANUAL-DISPATCH-2'
+    assert dispatched[0]['trigger'] == 'manual-dispatch'
+
+
+def test_handle_review_action_dual_mode_uses_backend_without_local_json(monkeypatch):
+    import server as srv
+
+    monkeypatch.setattr(srv, 'TASK_WRITE_MODE', 'dual', raising=False)
+    monkeypatch.setattr(
+        srv,
+        '_review_action_via_backend',
+        lambda task_id, action, comment='': {
+            'ok': True,
+            'message': 'backend review ok',
+            'state': 'Done',
+            'review_round': 0,
+        },
+        raising=False,
+    )
+    save_calls = []
+    monkeypatch.setattr(srv, 'save_tasks', lambda tasks: save_calls.append(tasks))
+    monkeypatch.setattr(srv, 'load_tasks', lambda: [{'id': 'TEST-REVIEW-DUAL-1', 'state': 'PendingConfirm', 'org': '尚书省'}])
+
+    result = srv.handle_review_action('TEST-REVIEW-DUAL-1', 'approve', '准奏')
+
+    assert result['ok'] is True
+    assert result['message'] == 'backend review ok'
+    assert save_calls == []
+
+
+
+def test_handle_review_action_dual_mode_falls_back_to_legacy_when_backend_fails(monkeypatch):
+    import server as srv
+
+    monkeypatch.setattr(srv, 'TASK_WRITE_MODE', 'dual', raising=False)
+    monkeypatch.setattr(
+        srv,
+        '_review_action_via_backend',
+        lambda task_id, action, comment='': {'ok': False, 'error': 'backend unavailable'},
+        raising=False,
+    )
+
+    saved = []
+    monkeypatch.setattr(srv, 'save_tasks', lambda tasks: saved.append(tasks))
+    monkeypatch.setattr(srv, 'load_tasks', lambda: [{
+        'id': 'TEST-REVIEW-DUAL-2',
+        'state': 'PendingConfirm',
+        'title': '待回退审批',
+        'org': '尚书省',
+        'now': '待确认',
+        'pending_confirm': {
+            'target_state': 'Done',
+            'requested_by': 'shangshu',
+            'requested_at': '2026-04-17T00:00:00Z',
+            'confirm_by': 'menxia',
+            'risk_key': 'Review->Done',
+            'status': 'pending',
+        },
+        'gate_checks': [{
+            'at': '2026-04-17T00:00:00Z',
+            'gate': 'high_risk_transition',
+            'from': 'Review',
+            'to': 'Done',
+            'confirm_by': 'menxia',
+            'risk_key': 'Review->Done',
+            'result': 'pending',
+        }],
+        'flow_log': [],
+        'updatedAt': '2026-04-17T00:00:00Z',
+    }])
+
+    result = srv.handle_review_action('TEST-REVIEW-DUAL-2', 'approve', '准奏')
+
+    assert result['ok'] is True
+    assert saved and saved[0][0]['state'] == 'Done'
+    assert saved[0][0]['gate_checks'][-1]['result'] == 'approved'
 
 
 def test_timeout_summary_route_groups_stalled_tasks(tmp_path):
@@ -1031,6 +1626,118 @@ def test_court_discussion_supports_all_11_officials():
     assert {o['id'] for o in created['officials']} == set(official_ids)
 
 
+def test_handle_create_task_dual_mode_uses_backend_without_local_json(monkeypatch):
+    import server as srv
+
+    monkeypatch.setattr(srv, 'TASK_WRITE_MODE', 'dual', raising=False)
+    monkeypatch.setattr(srv, 'load_tasks', lambda: [])
+
+    backend_calls = []
+    monkeypatch.setattr(
+        srv,
+        '_create_task_via_backend',
+        lambda **kwargs: backend_calls.append(kwargs) or {
+            'ok': True,
+            'taskId': kwargs['legacy_id'],
+            'backendTaskId': 'uuid-backend-1',
+            'message': 'backend created',
+        },
+        raising=False,
+    )
+
+    save_calls = []
+    dispatch_calls = []
+    monkeypatch.setattr(srv, 'save_tasks', lambda tasks: save_calls.append(tasks))
+    monkeypatch.setattr(srv, 'dispatch_for_state', lambda *args, **kwargs: dispatch_calls.append((args, kwargs)))
+
+    result = srv.handle_create_task(
+        '这是一个足够长的 backend 创建测试标题',
+        priority='high',
+        template_id='tpl-001',
+        params={'city': '北京'},
+        target_dept='工部',
+    )
+
+    assert result['ok'] is True
+    assert result['taskId'].startswith('JJC-')
+    assert result['backendTaskId'] == 'uuid-backend-1'
+    assert backend_calls[0]['legacy_id'] == result['taskId']
+    assert backend_calls[0]['template_id'] == 'tpl-001'
+    assert backend_calls[0]['target_dept'] == '工部'
+    assert save_calls == []
+    assert dispatch_calls == []
+
+
+def test_handle_create_task_dual_mode_falls_back_to_legacy_when_backend_fails(monkeypatch):
+    import server as srv
+
+    monkeypatch.setattr(srv, 'TASK_WRITE_MODE', 'dual', raising=False)
+    monkeypatch.setattr(srv, 'load_tasks', lambda: [])
+    monkeypatch.setattr(
+        srv,
+        '_create_task_via_backend',
+        lambda **kwargs: {'ok': False, 'error': 'backend unavailable'},
+        raising=False,
+    )
+
+    saved = []
+    dispatched = []
+    monkeypatch.setattr(srv, 'save_tasks', lambda tasks: saved.append(tasks))
+    monkeypatch.setattr(
+        srv,
+        'dispatch_for_state',
+        lambda task_id, task, state, trigger='imperial-edict': dispatched.append({
+            'task_id': task_id,
+            'state': state,
+            'trigger': trigger,
+            'task': task,
+        }),
+    )
+
+    result = srv.handle_create_task('这是一个足够长的 fallback 测试标题', target_dept='工部')
+
+    assert result['ok'] is True
+    assert result['taskId'].startswith('JJC-')
+    assert saved and saved[0][0]['id'] == result['taskId']
+    assert saved[0][0]['targetDept'] == '工部'
+    assert dispatched and dispatched[0]['task_id'] == result['taskId']
+    assert dispatched[0]['state'] == 'Taizi'
+
+
+def test_update_task_todos_dual_mode_uses_backend_without_local_json(monkeypatch):
+    import server as srv
+
+    monkeypatch.setattr(srv, 'TASK_WRITE_MODE', 'dual', raising=False)
+    monkeypatch.setattr(srv, '_update_task_todos_via_backend', lambda task_id, todos: {'ok': True, 'message': 'backend todos ok'}, raising=False)
+
+    save_calls = []
+    monkeypatch.setattr(srv, 'save_tasks', lambda tasks: save_calls.append(tasks))
+    monkeypatch.setattr(srv, 'load_tasks', lambda: [{'id': 'JJC-TODO-001', 'todos': []}])
+
+    result = srv.update_task_todos('JJC-TODO-001', [{'id': '1', 'title': '补测试', 'status': 'completed'}])
+
+    assert result['ok'] is True
+    assert result['message'] == 'backend todos ok'
+    assert save_calls == []
+
+
+def test_update_task_todos_dual_mode_falls_back_to_legacy_when_backend_fails(monkeypatch):
+    import server as srv
+
+    monkeypatch.setattr(srv, 'TASK_WRITE_MODE', 'dual', raising=False)
+    monkeypatch.setattr(srv, '_update_task_todos_via_backend', lambda task_id, todos: {'ok': False, 'error': 'backend unavailable'}, raising=False)
+
+    saved = []
+    monkeypatch.setattr(srv, 'save_tasks', lambda tasks: saved.append(tasks))
+    monkeypatch.setattr(srv, 'load_tasks', lambda: [{'id': 'JJC-TODO-001', 'todos': []}])
+
+    result = srv.update_task_todos('JJC-TODO-001', [{'id': '1', 'title': '补测试', 'status': 'completed'}])
+
+    assert result['ok'] is True
+    assert saved and saved[0][0]['todos'][0]['id'] == '1'
+    assert saved[0][0]['todos'][0]['status'] == 'completed'
+
+
 def test_adopt_court_conclusion_writes_todo_and_rule(tmp_path, monkeypatch):
     data_dir = tmp_path / 'data'
     data_dir.mkdir()
@@ -1071,3 +1778,115 @@ def test_adopt_court_conclusion_writes_todo_and_rule(tmp_path, monkeypatch):
     assert again['counts']['todos'] == 0
     assert again['counts']['rules'] == 0
     assert again['counts']['skipped'] >= 2
+
+
+def test_adopt_court_conclusion_creates_court_task_via_modify_tasks(tmp_path, monkeypatch):
+    data_dir = tmp_path / 'data'
+    data_dir.mkdir()
+    (data_dir / 'tasks_source.json').write_text(json.dumps([], ensure_ascii=False), encoding='utf-8')
+
+    import court_discuss as cd
+    import server as srv
+    srv.DATA = data_dir
+    srv._ACTIVE_TASK_DATA_DIR = None
+
+    called = {'count': 0}
+    real_modify_tasks = srv.modify_tasks
+
+    def wrapped(updater):
+        called['count'] += 1
+        return real_modify_tasks(updater)
+
+    monkeypatch.setattr(srv, 'modify_tasks', wrapped)
+
+    created = cd.create_session('议政采纳建任务', ['gongbu'], '')
+    sid = created['session_id']
+    raw = cd._sessions[sid]
+    raw['phase'] = 'concluded'
+    raw['summary'] = '形成一条 task'
+    raw['conclusion'] = {
+        'decision': '采纳', 'consensus': [], 'controversies': [], 'next_steps': [],
+        'actions': [
+            {'type': 'task', 'title': '生成 COURT 任务', 'content': '从议政结论创建任务', 'owner': '工部'},
+        ]
+    }
+
+    result = srv.adopt_court_conclusion(sid)
+    assert result['ok'] is True
+    assert result['counts']['tasks'] == 1
+    assert called['count'] == 1
+
+    tasks = json.loads((data_dir / 'tasks_source.json').read_text(encoding='utf-8'))
+    assert tasks[0]['id'].startswith(f'COURT-{sid}-0')
+    assert tasks[0]['source'] == 'court_discuss'
+
+
+def test_startup_recover_queued_dispatches_repairs_then_dispatches(tmp_path, monkeypatch):
+    data_dir = tmp_path / 'data'
+    data_dir.mkdir()
+    task = {
+        'id': 'JJC-RECOVER-001',
+        'title': '启动恢复测试',
+        'state': 'Doing',
+        'org': '工部',
+        '_scheduler': {
+            'lastDispatchStatus': 'queued',
+            'lastDispatchAgent': 'gongbu',
+        }
+    }
+    (data_dir / 'tasks_source.json').write_text(json.dumps([task], ensure_ascii=False), encoding='utf-8')
+
+    import server as srv
+    srv.DATA = data_dir
+    srv._ACTIVE_TASK_DATA_DIR = None
+
+    dispatched = []
+    monkeypatch.setattr(srv, 'dispatch_for_state', lambda task_id, task, state, trigger='state-transition': dispatched.append({
+        'task_id': task_id,
+        'state': state,
+        'trigger': trigger,
+        'snapshot_status': ((task.get('_scheduler') or {}).get('lastDispatchStatus')),
+    }))
+
+    srv._startup_recover_queued_dispatches()
+
+    tasks = json.loads((data_dir / 'tasks_source.json').read_text(encoding='utf-8'))
+    sched = tasks[0]['_scheduler']
+    assert sched['lastDispatchStatus'] == 'queued'
+    assert sched['lastDispatchTrigger'] == 'startup-recovery'
+    assert len(dispatched) == 1
+    assert dispatched[0]['task_id'] == 'JJC-RECOVER-001'
+    assert dispatched[0]['trigger'] == 'startup-recovery'
+    assert dispatched[0]['snapshot_status'] == 'queued'
+
+
+def test_startup_recover_queued_dispatches_suppresses_shangshu_without_redispatch(tmp_path, monkeypatch):
+    data_dir = tmp_path / 'data'
+    data_dir.mkdir()
+    task = {
+        'id': 'JJC-RECOVER-002',
+        'title': '启动恢复主会话保护测试',
+        'state': 'Assigned',
+        'org': '尚书省',
+        '_scheduler': {
+            'lastDispatchStatus': 'queued',
+            'lastDispatchAgent': 'shangshu',
+        }
+    }
+    (data_dir / 'tasks_source.json').write_text(json.dumps([task], ensure_ascii=False), encoding='utf-8')
+
+    import server as srv
+    srv.DATA = data_dir
+    srv._ACTIVE_TASK_DATA_DIR = None
+
+    dispatched = []
+    monkeypatch.setattr(srv, 'dispatch_for_state', lambda *args, **kwargs: dispatched.append(args))
+
+    srv._startup_recover_queued_dispatches()
+
+    tasks = json.loads((data_dir / 'tasks_source.json').read_text(encoding='utf-8'))
+    sched = tasks[0]['_scheduler']
+    assert sched['lastDispatchStatus'] == 'suppressed-main-session-guard'
+    assert sched['lastDispatchTrigger'] == 'startup-recovery'
+    assert 'startup recovery suppressed' in sched['lastDispatchError']
+    assert dispatched == []

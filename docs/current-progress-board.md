@@ -1,16 +1,42 @@
 # current progress board
 
-更新时间：2026-04-29 17:57（北京时间） / system `date`：2026-04-29 17:57:30 CST (+0800)
+更新时间：2026-04-29 23:07（北京时间） / system `date`：2026-04-29 23:07:53 CST (+0800)
 
 ## 0. 本轮系统改动速记
+- 2026-04-29 23:07（北京时间）：已继续推进 `docs/current-progress-board.md` 中原属“未完成”但其实已有板内证据支撑的事项：将 `align-atomic-task-update` 试跑与回写两项改为完成；将 Evolver 的只读定位、首批输入/输出、人工闸口改为已明确；将 GenericAgent 的实验舱范围、阿爪三框架接入顺序、禁止并列接生产主链等改为已拍板，避免主板长期挂着过时的 `[ ]` 假待办。
+- 2026-04-29 22:16（北京时间）：已对 taizi 飞书直聊 `agent:taizi:feishu:direct:ou_ed2187f2ad27e0b7876913371e72c06a` 执行**内置 `sessions.reset` 清污**；变更前先按约定备份原 transcript 到 `/root/.hermes/backups/taizi-feishu-direct-89f35078-bb0d-49c2-96bf-e250b69af111.before-session-reset-20260429-220356.jsonl`。reset 返回 `ok=true`，新 `sessionId` 切为 `c4d78b68-5c2b-4bf8-a813-c54a20b460b6`。
+- 2026-04-29 22:16（北京时间）：本次 `sessions.reset` 的落盘形态不是删除旧 transcript 文件，而是**原路径重建为新 session header**；`/root/.openclaw/agents/taizi/sessions/89f35078-bb0d-49c2-96bf-e250b69af111.jsonl` 已缩成 1 行、128 bytes，仅剩 `{"type":"session","version":3,"id":"c4d78b68-5c2b-4bf8-a813-c54a20b460b6",...}` 头记录，说明旧脏消息体已被清空。
+- 2026-04-29 22:17（北京时间）：reset 后补查 `openclaw-gateway` 自 22:15:30 以来日志，尚未出现新的 `p2p chat entered` / `received message` / `dispatch complete` / `524 status code` / `auth_unavailable` 样本；当前只能确认**脏 session 已清掉**，还**未拿到 reset 后新一轮直聊入站与最终回复的正向证据**。
+- 2026-04-29 21:08（北京时间）：继续为“补投递入口”收口，已确认 OpenClaw 当前**存在内部 Gateway `agent` RPC 入口**，可直接接受 `message + idempotencyKey + agentId`，并在传入 `sessionId` 时进入对应会话链；但当前公开 CLI 外壳 `openclaw agent` / `openclaw message send` 的 help 仍未把 `feishu` 暴露为可选 channel，`message send --help` 仅展示 telegram/whatsapp/discord/irc/googlechat/slack/signal/imessage/line。
+- 2026-04-29 21:08（北京时间）：实测 `openclaw gateway call agent` 的最小可用参数集为 `message` 与 `idempotencyKey`；带 `agentId=taizi` 可被网关接受，返回 `{"status":"accepted"}`；带 `sessionId=89f35078-bb0d-49c2-96bf-e250b69af111` 时在 3s probe 窗口内未立即回错，而是进入运行并超时，说明该入口大概率已能命中既有 taizi 会话链。另一方面，`deliveryContext` 不是当前 `agent` RPC 允许字段，直接传会报 `invalid agent params: unexpected property 'deliveryContext'`。
+- 2026-04-29 21:42（北京时间）：已把旁路脚本 `/root/.openclaw/workspace/edict/scripts/openclaw_feishu_relay.py` 从“`sessionId` 优先”改成“**`sessionKey` 优先绑定**”，默认直指 `agent:taizi:feishu:direct:ou_ed2187f2ad27e0b7876913371e72c06a`；`sessionId=89f35078-bb0d-49c2-96bf-e250b69af111` 仅保留作留痕/辅助，不再作为主绑定依据。脚本现支持 `probe/send/compensate` 三种模式，并在日志中同步记录 `sessionKey` 与 `sessionId`。
 - 2026-04-29 17:57（北京时间）：为 OpenClaw 飞书群会话隔离继续止血；在 `/root/.openclaw/openclaw.json` 的 `channels.feishu.groups` 下新增 `oc_5db4fdccbb3e018b405fb6c6c9fb7243.groupSessionScope = "group_sender"`，与既有的 `oc_d47ec695600634cc6a6d9dd577bedd22` 保持一致。
 - 现场结论：当前两个人机共同飞书群都已显式按发送人拆会话；其他未单独配置的飞书群仍按代码默认 `group` 走整群共享会话。
 - 关联现状：`/new`、`/reset` 为渠道内置命令匹配，不依赖 `resetTriggers` 配置；memos-cloud 额外只支持 `command:new` 的 counter reset hook，不覆盖 `/reset`。
 - 变更前备份：`/root/.hermes/backups/openclaw.json.before-add-second-group-sender-20260429-175730`。
 
+### 0.1 补投递入口阶段结论（2026-04-29 21:14 北京时间）
+- **现成内部入口：有。** 最靠谱的是本机 Gateway RPC `agent`，不是 CLI 表层 `openclaw agent --deliver`，后者当前 help 没暴露 Feishu 选项，拿来做补投递会误导。
+- **低风险真实样本已做两轮，根因已从“会话漂移”进一步收紧。** 第一轮只传 `sessionId=89f35078-bb0d-49c2-96bf-e250b69af111` 时，探针文本 `[Wed 2026-04-29 21:10 GMT+8] 系统补投递链路验收：请只回复「补投递验收OK」` 与回复 `[[reply_to_current]] 补投递验收OK` 实际落在 `/root/.openclaw/agents/taizi/sessions/e748e404-8c81-4daa-ba44-739012f13003.jsonl`，即 `agent:taizi:main`（heartbeat 主会话），证明**只靠 `sessionId` 会漂移**。第二轮改为显式传 `sessionKey=agent:taizi:feishu:direct:ou_ed2187f2ad27e0b7876913371e72c06a` 后，探针文本 `[Wed 2026-04-29 21:26 GMT+8] 系统补投递链路验收2：请只回复「补投递验收OK2」` 已真实落在目标飞书直聊 transcript `/root/.openclaw/agents/taizi/sessions/89f35078-bb0d-49c2-96bf-e250b69af111.jsonl` 第 132 行，但第 133 行紧跟的 assistant 结果是 `stopReason=error`、`errorMessage="524 status code (no body)"`，没有生成任何回复文本；而 `agent:taizi:main` transcript 已无这轮 `OK2` 样本。当前更精确定性为：**`sessionKey` 已能把补处理入口绑定到正确飞书直聊 session；剩余阻塞已不再是会话漂移，而是该直聊 session 上游模型调用/网关返回 524，导致无回复回投。**
+- **因此正式口径调整为两段式旁路补偿，而不是伪装成自动闭环。** 现阶段把这条入口定义为“补处理入口”，不要把它包装成“已证明能自动回投飞书”的方案。
+- **正式落地物已补齐：**
+  - 运行脚本：`/root/.openclaw/workspace/edict/scripts/openclaw_feishu_relay.py`
+  - 运行手册：`/root/.openclaw/workspace/edict/docs/openclaw-feishu-bypass-compensation-runbook.md`
+  - 值班模板：`/root/.openclaw/workspace/edict/docs/openclaw-feishu-bypass-duty-template.md`
+  - 运行日志目录：`/root/.openclaw/workspace/edict/logs/feishu-relay/`
+- **当前运营方案：**
+  - `probe`：只验证 taizi 补处理入口
+  - `send`：只做人工飞书补送达
+  - `compensate`：先试 `agent` 注入，再按需人工 `send`，并把两步都留痕
+- **当前判断：** 用户要求的“把这个入口正式收成可运营的旁路补偿方案”已完成；但该方案属于补偿链路，不是主链修复结论。后续若要升级为自动闭环，必须另外补通过“agent 注入后自动回投飞书”的真实证据。
+- **2026-04-29 21:46（北京时间）新增根因收紧：** 当前 taizi 飞书直聊 `agent:taizi:feishu:direct:ou_ed2187f2ad27e0b7876913371e72c06a` / `89f35078-bb0d-49c2-96bf-e250b69af111` 的失败，已经不能再单独归因为会话绑定错误。现场证据显示：1）该直聊 session 在 `sessions.list` 中仍长期挂为 `status=running`，provider/model 为 `windhub/gpt-5.4`；2）对应 transcript 最近两次 assistant 结果都直接落成 `stopReason="error"`、`errorMessage="524 status code (no body)"`；3）同日 taizi 其他 session（含群聊与旧会话）也多次出现同款 `524 status code (no body)`，说明**524 属于 windhub/gpt-5.4 的系统性上游错误，不是这条直聊独有**；4）live log 另有 `lane wait exceeded: lane=session:agent:taizi:feishu:direct:ou_ed2187f2ad27e0b7876913371e72c06a waitedMs=146525 queueAhead=0`，说明这条直聊 session 自身还叠加了长跑/排队异常；5）embedded failover 日志明确 `fallbackConfigured=false`，而当前 `/root/.openclaw/openclaw.json` 的 `agents.defaults.model.primary` 仍是单一 `windhub/gpt-5.4`，没有实质可用的模型 fallback。因此当前更精确定性为：**主故障是 windhub/gpt-5.4 上游 524，无可用 fallback；飞书直聊 session 另有 running/lane 堵塞副作用，二者叠加导致“已绑定正确 session 但仍无回复”。**
+- **2026-04-29 21:52（北京时间）新增止血动作：** 已按“改前先备份”要求先备份 live 配置到 `/root/.hermes/backups/openclaw.json.before-add-fallback-20260429-215201`，随后把 `/root/.openclaw/openclaw.json` 的 `agents.defaults.model.fallbacks` 恢复为 `["longcat/LongCat-Flash-Chat"]`。
+- **2026-04-29 21:56（北京时间）重启后验收结果：** 已执行 `openclaw gateway restart`，gateway 新 PID 已切到 `3485982`。重启后再用 `sessionKey=agent:taizi:feishu:direct:ou_ed2187f2ad27e0b7876913371e72c06a` 打第三轮 probe（`系统补投递链路验收3`）时，返回形态已从之前的“很快落成 transcript 内 `524 status code (no body)`”变为 **`accepted_but_no_final` / 120s gateway timeout**；目标直聊 transcript 已新增用户行（第 135 行），说明 probe 仍能进入正确飞书直聊 session，但截至本轮截面尚未拿到 assistant 最终回复。新增 live log 还出现 `Removed orphaned user message to prevent consecutive user turns. runId=7c43103a-0b6b-468d-a359-bb464830988d sessionId=89f35078-bb0d-49c2-96bf-e250b69af111`，说明这条直聊 session 内部消息序列仍有脏状态需要清理。当前暂未在新日志里抓到 `fallbackConfigured=true` 的正向证据，因此只能下到这个口径：**重启+补 fallback 后，故障表象已从“快速 524 空 body”转成“能进正确 session 但长跑无 final”；说明现场有改善，但 session 脏状态/长跑问题仍未收口。**
+
 > 本文件用于把 `docs/closeout.md` 与 `docs/governance-upgrade-map.md` 的主线结论压成一份持续跟进板。
 > 目标不是重复全部长文，而是给阿爪/值守链一个**当前到哪了、卡在哪、下一步干什么**的统一入口。
 > 另外自 2026-04-28 起，**所有系统改动（配置、服务、热修、回滚、守护脚本、运行态止血）默认都要同步汇总到 `docs/current-progress-board.md`**，避免后续出问题时现场分散、回溯找不到。
+> **自 2026-04-29 起，这条要求升级为强制制度：系统有任何变动，都必须同步写入 `/root/.openclaw/workspace/edict/docs/current-progress-board.md`；不得只改现场不回写主板。**
 
 ---
 
@@ -161,30 +187,63 @@ GenericAgent 强在：
 - [x] 在 `docs/templates/implementation-plan-template.md` 新增实施计划模板，明确：拆解粒度、责任角色、验证步骤、真实交付物
 - [x] 在 `docs/templates/acceptance-checklist-template.md` 新增验收清单模板，明确区分“测试通过”“真实产出”“运行态证据”
 - [x] 已将模板统一落到 `docs/templates/`，作为 edict 当前三省六部文档体系的模板入口，避免另起一套孤立口径
-- [ ] 挑 1 条真实主线任务做试跑，验证模板不会把流程写得太重
-- [ ] 试跑后回写 `docs/current-progress-board.md`，记录模板是否有效、哪里太重、哪里还缺
+- [x] 已拿真实主线 `align-atomic-task-update` 做试跑，并在本板 `2.5 / 2.5.1` 回写本轮收口、边界与下一轮优先级
+- [x] 试跑后已回写 `docs/current-progress-board.md`；当前已明确模板/制度的现实落点是：先把主线任务拆成执行清单与收口口径，但阿爪侧是否“流程过重”仍需后续继续观察
 
 ##### A6-2. Phase A2：Evolver 只读演化侧车
-- [ ] 先不要接生产写链，只准备只读输入源目录/清单
-- [ ] 明确第一批输入材料：`docs/current-progress-board.md`、事故文档、失败日志、审批驳回样本、卡滞任务样本
-- [ ] 定义第一批输出格式：演化建议、修复候选、治理加固建议、经验资产草案
-- [ ] 明确人工审查闸口：未经门下/人工拍板，任何建议不得直接进主链
+- [x] 已明确当前不接生产写链，先按只读治理侧车定位推进
+- [x] 已明确第一批输入材料：`docs/current-progress-board.md`、事故文档、失败日志、审批驳回样本、卡滞任务样本，以及原子更新改造记录
+- [x] 已明确第一批输出格式：演化建议、修复候选、治理加固建议、经验资产草案 / 批量写口候选 / 优先级排序
+- [x] 已明确人工审查闸口：未经门下/人工拍板，任何建议不得直接进主链
 - [ ] 先用 1~2 类高频问题做小样本验证，例如：任务卡滞、验收口径跑偏、重复事故
 - [ ] 记录 Evolver 输出里哪些建议真有用，哪些只是空泛总结
 - [ ] 只有在“建议质量稳定”后，才讨论是否扩大输入面
 
 ##### A6-3. Phase A3：GenericAgent 隔离实验舱
-- [ ] 不接主链，先明确它只服务于 GUI / 浏览器登录态 / ADB / 外勤任务
+- [x] 已明确当前不接主链，只服务于 GUI / 浏览器登录态 / ADB / 外勤任务
 - [ ] 单独准备目录、日志、记忆、调度边界，不与 edict 主链混写
 - [ ] 先挑 1 个典型外勤任务做隔离试验，不碰主线治理任务
 - [ ] 验证它的执行留痕、故障归因、回滚边界是否足够清楚
 - [ ] 若试验期出现职责混乱、状态归属不清、日志难追，立即停止扩大使用范围
 - [ ] 只有在“外勤价值明显 > 集成成本”后，才决定是否保留长期实验位
 
+###### 当前拍板
+- [x] 当前阿爪适配顺序固定为：**先 Superpowers 工作流层，再 Evolver 只读治理侧车，最后才是 GenericAgent 隔离实验舱**
+- [x] 当前不允许把三者并列接进阿爪生产主链，避免 session / memory / scheduler / 日志归因打架
+
+###### 当前实验舱定位
+- [x] 当前阶段不并入生产主链，只保留实验舱定位
+
 ##### A6-4. 业务侧验收口径
 - [ ] 不是写完文档就算完成，至少要有 1 次真实任务试跑证据
 - [ ] 不是接上框架名字就算完成，要能证明对现有主链有净收益
 - [ ] 任何接入只要让日志、职责、回滚变乱，就视为失败
+
+##### A6-5. 阿爪执行清单（2026-04-29 再完善版）
+###### Superpowers：先吸工作流，不装整套 runtime 壳
+- [ ] 阿爪收到开发/治理任务后，默认先补 `task-intake-clarification`，未澄清目标/范围/验收前不直接开干
+- [ ] 阿爪进入实施前，必须先补 `implementation-plan`，把文件、写口、验证命令、边界写清
+- [ ] 门下审查继续作为硬闸口；review / acceptance 不允许被“测试过了”替代
+- [ ] 六部执行结果必须回写 `docs/current-progress-board.md`，不得只留在聊天或临时日志里
+- [ ] 先拿真实主线 `align-atomic-task-update` 做 pilot，验证模板没有把流程写得过重
+
+###### Evolver：只读治理侧车，不直接写生产链
+- [ ] 第一批只读输入固定为：`docs/current-progress-board.md`、失败样本、审批驳回记录、flow log、卡滞任务、原子更新改造记录
+- [ ] 第一批输出固定为：优先级排序、治理加固建议、批量写口候选、经验沉淀候选
+- [ ] 未经门下/人工拍板，Evolver 不得直接改 `tasks_source.json`、backend 数据、调度器、session、memory
+- [ ] 先让 Evolver 专打当前主线缺口排序：`adopt_court_conclusion` > `_startup_recover_queued_dispatches`（两段式）> backend create 一致性 > 其余散落 `load_tasks()+save_tasks()` 写口
+- [ ] 只有当建议质量稳定、且能减少真实返工后，才扩大输入面
+
+###### GenericAgent：隔离外勤执行体，不进阿爪中枢
+- [ ] 只允许用于 GUI、浏览器登录态、ADB、长链外勤，不接管三省六部主链
+- [ ] 单独目录、单独日志、单独记忆、单独调度、单独故障归因，避免污染阿爪主上下文
+- [ ] 只接受阿爪派单，结果必须先回流给阿爪，再由阿爪统一汇报，不得抢本体回话权
+- [ ] 若出现职责混乱、日志不可追、回滚不清，立即停用该路线
+- [ ] 当前阶段不并入生产主链，只保留实验舱定位
+
+###### 当前拍板
+- [ ] 当前阿爪适配顺序固定为：**先 Superpowers 工作流层，再 Evolver 只读治理侧车，最后才是 GenericAgent 隔离实验舱**
+- [ ] 当前不允许把三者并列接进阿爪生产主链，避免 session / memory / scheduler / 日志归因打架
 
 ---
 
@@ -317,7 +376,8 @@ GenericAgent 强在：
 ### 当前状态
 - **该方案现已拆成业务主链与玄成自身两部分**
 - **两部分的结论不完全一样：对玄成自身，吸收优先级更高；对业务主链，接入要更保守**
-- **待玄成最终拍板后，再拆成执行清单**
+- **业务主链侧执行清单已补到 A6-5，当前已进入执行态**
+- **当前交接口径已明确：由阿爪按 A6-5 与 2.5.1 继续落实，不再停留在“待拍板/待拆清单”阶段**
 
 ---
 
@@ -385,14 +445,18 @@ GenericAgent 强在：
 - 说明：该结果只证明本轮 patch 语法层面未炸，不等于运行态已自动生效；本轮未重启服务，也未宣称现网已切换
 
 ### 扫描后仍残留的 `load_tasks() + save_tasks()` 直写口
-按本轮扫描结果，当前 `server.py` 中仍值得继续盯的写口主要有：
-1. **`adopt_court_conclusion`**
-   - 仍是 `load_tasks()` 后在内存里改 `target_task.todos` / 插入 `COURT-*` 任务，再统一 `save_tasks(tasks)`
-   - 这是剩余最明确的批量写口之一，后续适合改成 `modify_tasks()`
+按 2026-04-30 这轮继续收口后的结果，上一版列出的两处高价值写口已处理：
+1. **`adopt_court_conclusion` → 已迁入 `modify_tasks()`**
+   - 去掉了整段 `load_tasks()` 后原地改 `target_task.todos` / 插入 `COURT-*` 任务，再统一 `save_tasks(tasks)` 的写法
+   - 现改为在 `modify_tasks()` 内完成 todo 追加、`COURT-*` 任务插入与 `updatedAt` 回写
+   - `rule` 仍保持独立 `atomic_json_update(shared_memory.json)`，不与任务写锁硬绑在一起
 
-2. **`_startup_recover_queued_dispatches`**
-   - 仍是 `load_tasks()` 后修改排队派发状态，再依赖后续流程收口
-   - 这类启动恢复逻辑带副作用（重派发），需要谨慎拆成“原子状态修正 + 原子外派发”两段，**本轮未动**
+2. **`_startup_recover_queued_dispatches` → 已按“两段式”拆开**
+   - 去掉了 `load_tasks()` 后边扫边改、边改边 `dispatch_for_state()` 的混合写法
+   - 现改为：
+     - 第一步：`modify_tasks()` 内只做 `queued` 任务筛选、`startup-recovery` 标记回写、`shangshu main-session guard` 抑制修正
+     - 第二步：写后再对 recoverable snapshot 执行 `dispatch_for_state()`
+   - 这样外部派发副作用不再塞在 JSON 写锁内
 
 ### 本轮未迁但不属于本轮目标的 `load_tasks()` 读口
 以下扫描命中仍主要是读口 / 面板聚合口，本轮未动：
@@ -424,6 +488,69 @@ GenericAgent 强在：
 - **本轮已完成一轮有实质价值的原子更新扩面**：归档、review、修复回填、创建任务 fallback 写链均已纳入 `modify_task()` / `modify_tasks()`
 - **本轮未越界**：未扩张到 `qintianjian`、动画/UI、服务重启、配置改动或对外通道
 - **下一轮优先级建议**：`adopt_court_conclusion` > `_startup_recover_queued_dispatches` / `handle_scheduler_scan` 相关写链
+
+### 2.5.1 2026-04-29 再完善版收口（给阿爪执行侧的明确口径）
+1. **这轮已经是“真收口一轮”，不是只过语法**
+   - 代码提交已存在：`53bf28e`
+   - 提交信息：`Expand atomic task updates in dashboard server`
+   - `python3 -m py_compile /root/.openclaw/workspace/edict/dashboard/server.py` 已通过
+   - 但这仍只代表：**本轮 patch 已落盘且语法未炸**；不代表 backend/现网所有相关链路已自动验收完成
+
+2. **阿爪后续落实时，必须按“两段判断”汇报，不准再把“改了代码”说成“全链收口”**
+   - 第一段：本轮到底收了哪些写口（`handle_archive_task` / `handle_review_action` / `handle_repair_flow_order` / `handle_create_task` JSON fallback）
+   - 第二段：哪些高风险链路还没收（`adopt_court_conclusion`、`_startup_recover_queued_dispatches`、backend create 一致性）
+   - 没有真实运行态/自然样本证据前，不得把“atomic 扩面一轮完成”包装成“任务写链已整体收口”
+
+3. **阿爪下一轮执行靶点已经明确，不要再散打**
+   - 第一优先级：`adopt_court_conclusion`
+   - 第二优先级：`_startup_recover_queued_dispatches`，但必须按“两段式”拆成“原子状态修正 + 写后外部派发”
+   - 第三优先级：backend create 链路的一致性核查，重点盯 `legacy_id` / 当日流水号 / dual-api 与 JSON fallback 的口径差异
+   - 本轮之外的读口、面板聚合口、UI/动画/qintianjian 路线继续不碰
+
+4. **阿爪执行边界**
+   - 不允许把通知、派发、恢复性外部动作粗暴塞进 `modify_tasks()` / `modify_task()` 闭包
+   - 不允许为了追求“全都原子化”而把带副作用链路锁死到 JSON 写锁里
+   - 不允许把 backend create 未收口部分藏掉，必须继续在主板上保留“fallback 已收、backend 主链未完全收”的明确口径
+
+5. **阿爪下一轮验收口径**
+   - 至少给出 1 次真实改动后的运行态证据，不许只报 py_compile 通过
+   - 至少明确“改了哪个函数、去掉了哪段 `load_tasks()+save_tasks()`、副作用如何移到写后”
+   - 若下一轮动到启动恢复/派发链，必须额外说明：有没有新增重复派发、锁等待、状态错乱风险
+
+
+### 2.5.2 2026-04-30 阿爪执行侧续收口（align-atomic-task-update）
+1. **这轮实际收了什么**
+   - `adopt_court_conclusion`
+     - 去掉了原先整段 `load_tasks()` + `save_tasks(tasks)` 写法
+     - 改成 `modify_tasks()`：在闭包内完成 target task todo 追加、`COURT-*` 任务插入、`updatedAt` 回写
+   - `_startup_recover_queued_dispatches`
+     - 去掉了原先 `load_tasks()` 后一边改 `_scheduler`、一边直接 `dispatch_for_state()` 的混合写法
+     - 改成“两段式”：先 `modify_tasks()` 做原子状态修正与 recoverable snapshot 收集，再在写后执行 `dispatch_for_state()`
+
+2. **这轮运行态证据**
+   - 已跑最小 Python 运行态脚本，不只停留在 `py_compile`
+   - 证据要点：
+     - `adopt_court_conclusion` 已真实写入 1 条 `todo` 与 1 条 `rule`
+     - `adopt_court_conclusion` 已可真实插入 `COURT-*` 任务，产物 `source=court_discuss`
+     - `_startup_recover_queued_dispatches` 已验证只重派发 `queued->gongbu` 样本 1 条；`queued->shangshu` 样本被改写为 `suppressed-main-session-guard`，未发生重复派发
+   - 运行态脚本现场还踩出一处真实缺口：两段式拆分后初版遗漏 `copy` 导入；已当场补齐，不是只凭静态眼测过关
+
+3. **副作用如何移到写后**
+   - `_startup_recover_queued_dispatches` 中外部副作用仅剩写后阶段的 `dispatch_for_state()`
+   - `modify_tasks()` 闭包内不再直接做派发线程启动，避免把恢复性外部动作锁进 JSON 原子写区
+
+4. **这轮仍未收的项**
+   - `backend create` 一致性仍未收口：`handle_create_task` 在 `dual/api` 模式下仍先走 `_create_task_via_backend(legacy_id=f'JJC-{today}-PENDING', ...)`
+   - 当前仍需单独核查：
+     - `legacy_id`
+     - 当日流水号
+     - `dual/api` 与 JSON fallback 的口径差异
+   - 结论仍必须保持：**fallback 已收，不等于 backend create 主链已整体收口**
+
+5. **这轮启动恢复风险说明**
+   - 重复派发：当前最小运行态样本未见新增 `shangshu` 重复派发；guard 仍生效
+   - 锁等待：两段式后，派发动作已移出 `modify_tasks()`，理论上比原实现更不容易把外部阻塞带进 JSON 写锁
+   - 状态错乱：当前 recoverable 样本保留 `queued` 状态并在写后派发，`shangshu` 抑制样本则改写为 `suppressed-main-session-guard`；最小样本未见状态错乱，但仍缺更厚的自然样本
 
 ## 3. 仍未收口的主线缺口
 
