@@ -1,6 +1,6 @@
 # current progress board
 
-更新时间：2026-04-28 21:45（北京时间） / system `date`：2026-04-28 21:45:00 CST (+0800)
+更新时间：2026-04-29 10:56（北京时间） / system `date`：2026-04-29 10:56:29 CST (+0800)
 
 > 本文件用于把 `docs/closeout.md` 与 `docs/governance-upgrade-map.md` 的主线结论压成一份持续跟进板。
 > 目标不是重复全部长文，而是给阿爪/值守链一个**当前到哪了、卡在哪、下一步干什么**的统一入口。
@@ -11,6 +11,144 @@
 ## 1. 一句话总览
 
 **edict / 三省六部治理升级主线目前处于：工程收口基本完成，backend host-native 已进入生产 dual/export 过渡态并出现真实导出证据；但前台写链 smoke、自然治理样本厚度与回滚验收仍未收口。OpenClaw / taizi 本轮已完成直连 DM 结构性修复与 provider/session 去钉死清理，且在晚间重启窗口后已再次拿到多轮 `received message -> dispatching to agent -> dispatch complete` 真实样本；当前不再是“DM 完全断链”，而是收敛为 **taizi 直聊 session 长跑 + 偶发消息整理脏状态** 的不稳定态；`menxia:main` 为历史噪声项，而 `shangshu:main` 本轮已完成 dashboard 重入止血与定点 session recovery。**
+
+---
+
+## 1.5 待审方案：三框架接入取舍与实施顺序（待玄成把关，确认后再执行）
+
+### 目标
+本轮不是把 `Superpowers / GenericAgent / Evolver` 全部堆进生产，而是围绕 **edict 现有三省六部主链** 做一轮可控升级：
+- 保持 `edict` 继续作为任务治理与状态流转中枢
+- 吸收 `tiangong / danghuangshang` 的治理硬度
+- 优先补齐演化修复能力，而不是继续把架构做胖
+
+### 结论
+**不建议三个框架全部直接安装进 edict 生产主链。**
+
+建议路线：
+- **优先接入：Evolver**
+- **重点吸收：Superpowers 的流程方法论**
+- **暂缓主链接入：GenericAgent，仅保留隔离实验位**
+
+核心原因：三者都碰 `skill / memory / agent loop / evolution / execution`，若同时深接，极易出现：
+- 技能体系重复
+- 记忆层冲突
+- 调度权不清
+- 日志归因困难
+- 故障面扩大
+
+### 三者定位
+#### 1) Evolver
+定位：**edict 的外置演化/修复增强层**
+
+适合承担：
+- 失败日志扫描
+- 状态卡滞模式识别
+- 经验沉淀
+- 修复/加固策略输出
+- 演化事件留痕
+
+本轮建议优先使用：
+- `repair-only`
+- `harden`
+
+原则：**先稳态，再创新。**
+
+#### 2) Superpowers
+定位：**研发治理与交付 SOP 来源，不作为主运行时依赖**
+
+建议吸收的能力：
+- 先澄清目标，再开工
+- 先设计，再写计划
+- 小步拆解
+- 先验证，再宣称完成
+- review 前置
+- 分支/阶段收口
+
+建议映射关系：
+- `中书`：目标澄清、任务拆解、方案成文
+- `门下`：审核、纠偏、风险把关
+- `六部`：执行、验证、交付回写
+
+结论：**拿它的流程，不拿它当运行时底座。**
+
+#### 3) GenericAgent
+定位：**后续高执行实验框架，当前不进生产主链**
+
+可预留的适用场景：
+- 本地 GUI 自动化
+- 浏览器登录态长链操作
+- ADB / 手机侧流程执行
+- 个性化 skill 自生长执行体
+
+限制原则：
+- 单独目录
+- 单独记忆
+- 单独日志
+- 单独调度边界
+- 不直接接管三省六部主链
+
+结论：**适合做实验舱，不适合现在直接入朝堂中枢。**
+
+### 推荐架构
+建议形成以下分层：
+- `edict`：任务治理中枢，负责三省六部编排、状态流转、交付留痕
+- `tiangong / danghuangshang 思想层`：治理纪律、角色边界、审批约束
+- `Evolver`：memory / logs / signals 驱动的演化、修复、加固
+- `Superpowers 方法论层`：研发与执行 SOP
+- `GenericAgent（后续可选）`：外勤型高执行代理实验位
+
+### 实施顺序
+#### Phase 1：先接 Evolver
+从以下输入源开始：
+- 任务失败日志
+- 状态卡滞记录
+- 审核驳回原因
+- 角色交接异常
+- memory 中沉淀的长期问题模式
+
+接入要求：
+- 输出可审计
+- 先以“提示/建议/修复策略”形式接入
+- 不越权直接改主链
+
+#### Phase 2：把 Superpowers 流程映射进 edict
+建议落地为：
+- 任务前澄清模板
+- 方案审批模板
+- 执行拆解模板
+- 验证与验收清单
+- 交付前 review 节点
+
+重点不是装插件，而是把它转成 edict 内部规则。
+
+#### Phase 3：预留 GenericAgent 实验舱
+适用场景：
+- 本地 GUI 自动化
+- 浏览器登录态长链操作
+- ADB / 手机侧流程执行
+- 高度个性化、自生长 skill 的专用执行体
+
+但必须：
+- 隔离部署
+- 单独日志
+- 单独记忆
+- 明确任务边界
+- 不直接接管三省六部主链
+
+### 风险提示
+1. **不要三者同时深接入主链**，否则会快速导致架构发胖、治理边界失真。
+2. **Evolver 先做 repair / harden，不急着做全自动 innovate**。
+3. **GenericAgent 必须隔离**，它适合高执行特种队，不适合直接入当前中枢。
+4. **Superpowers 要抽象成制度，不要照搬成新的运行时负担。**
+
+### 当前建议口径
+> 以 Evolver 作为 edict 的首个外置增强层，优先补齐演化修复与稳定性治理；以 Superpowers 作为研发治理与交付 SOP 的来源，内化为三省六部规则；将 GenericAgent 保留为后续隔离实验框架，不进入当前生产主链。
+
+### 当前状态
+- **该方案仅为待审稿**
+- **等待玄成把关**
+- **确认后再进入执行拆解**
 
 ---
 
@@ -89,6 +227,277 @@
 ### 3.2 自然治理样本仍偏薄
 - 能力已通过可逆 probe 与测试验证
 - 但自然运行样本仍不厚，不能把“能力存在”硬说成“线上已充分自然验证”
+
+### 3.3 2026-04-29 08:36（北京时间）上游 edict 更新同步结果
+#### 已完成的同步前置核对
+- 已对本机仓库执行 `git fetch --all --prune`。
+- 当前工作分支：`feat/governance-upgrade-mainline`。
+- 当前远端：
+  - `origin = https://github.com/joviji1/edict.git`
+  - `upstream = https://github.com/cft0808/edict.git`
+- 当前上游 `upstream/main` 已前进到：**`1ceee6b`**。
+- 当前本地主线工作 HEAD 仍在：**`81f8739`**。
+- 本地工作树存在大量未提交改动（dashboard / backend / scripts / docs / tests / dist 等均有变更），**当前不能直接无脑 merge upstream**。
+
+#### 本机运行环境对照
+- `edict-dashboard.service = active`
+- `edict-loop.service = active`
+- `edict-dashboard.service` 当前环境：`EDICT_TASK_WRITE_MODE=dual`
+- `edict-loop.service` 当前环境：`EDICT_ENABLE_BACKEND_EXPORT=true`
+- 这说明本机当前确实处于 **backend host-native + dual/export 过渡态**，不是 Docker 环境，也不是 README 里的纯演示态。
+
+#### 本次上游更新里与本机最相关的内容
+1. **安装/启动脚本开始正式兼容自定义 OpenClaw Home 与 Python 3.10+**
+   - `install.sh`、`scripts/apply_model_changes.py`、`scripts/sync_agent_config.py`、`scripts/sync_from_openclaw_runtime.py` 等，开始统一走 `OPENCLAW_HOME` / `get_openclaw_home()`，不再把路径硬编码到 `~/.openclaw`。
+   - `start.sh`、`scripts/run_loop.sh` 开始优先解析 `EDICT_PYTHON`，并把 Python 要求明确提升到 **3.10+**。
+   - 这对本机是**有价值但不是立刻阻塞**的同步项：本机当前运行正常，但后续若继续维护 host-native 安装，建议把这些路径/解释器兼容更新吸收进来，减少未来环境漂移。
+
+2. **dashboard/server.py 上游新增了几类关键修复**
+   - 用 `python_bin()` 统一子进程调用，减少解释器错位。
+   - `file://` 远程 skill 加了路径范围校验，补了 **CWE-22 / 路径遍历防护**。
+   - 引入 `modify_tasks()` / `modify_task()` 一类原子读改写封装，目的是修掉任务并发更新的 TOCTOU race。
+
+#### 2026-04-29 08:55（北京时间）定向同步实做结果
+- 已先备份本机关键文件到：`/root/.hermes/backups/edict-upstream-sync-20260429-083826/`
+- 本轮**已实际吸收**的高优先级兼容更新：
+  - `scripts/utils.py` 新增 `get_openclaw_home()`，统一支持 `OPENCLAW_HOME`
+  - `scripts/sync_agent_config.py` 改为走 `OPENCLAW_HOME` 推导 `openclaw.json` 与默认 workspace 路径
+  - `scripts/sync_from_openclaw_runtime.py` 改为走 `OPENCLAW_HOME/agents`
+  - `scripts/sync_officials_stats.py` 改为走 `OPENCLAW_HOME`
+  - `scripts/apply_model_changes.py` 改为走 `OPENCLAW_HOME/openclaw.json`
+  - `install.sh`、`start.sh`、`scripts/run_loop.sh`、`edict.sh` 已支持 `EDICT_PYTHON`，不再把解释器硬绑死在 `python3`
+  - `install.sh` 内嵌 Python 段与首次同步链路已同步改成 `OPENCLAW_HOME` / `EDICT_PYTHON` 口径
+- 本轮**未直接整块照搬**上游 `dashboard/server.py`：原因是本机当前 `server.py` 已有 backend dual/api 写链、governance sample 同步、export 过渡态等本地增强；若整文件覆盖会把本机生产逻辑打回去。
+- 本轮复核确认：`file://` 本地/远程 skill 路径范围校验在本机 `dashboard/server.py` 里**原本就已存在**，这块无需重复同步。
+
+#### 2026-04-29 08:55（北京时间）验证与顺手修复
+- 语法验证已过：
+  - `python3 -m py_compile dashboard/server.py scripts/utils.py scripts/sync_agent_config.py scripts/sync_from_openclaw_runtime.py scripts/sync_officials_stats.py scripts/apply_model_changes.py`
+  - `bash -n install.sh start.sh scripts/run_loop.sh edict.sh`
+- 运行验证已过：
+  - `python3 scripts/sync_agent_config.py` → `12 agents synced`
+  - `python3 scripts/sync_officials_stats.py` → `11 officials | cost=¥12.06 | top=太子`
+  - `python3 scripts/sync_from_openclaw_runtime.py` → `synced 4 tasks from openclaw runtime in 147ms`
+- 验证过程中额外暴露出一个**本机旧坑**，已当场修掉：
+  - `scripts/sync_from_openclaw_runtime.py` 原先默认把 session `updatedAt` 当整数毫秒；但现网 `sessions.json` 已出现 ISO 时间串（样本：`2026-04-28T12:46:33.134886Z`），导致脚本在 `now_ms - updated_at` 处抛 `TypeError`
+  - 现已新增 `_to_timestamp_ms()` 统一兼容 `int/float/ISO string`，并已覆盖到 `build_task()`、`should_keep_runtime_task()`、`tasks.sort(...)` 三处
+  - 这不是本轮同步新引入的问题，而是旧脚本的类型假设被验证步骤撞出来；现已随本轮一起收口
+
+#### 仍待后续评估的上游项
+- `dashboard/server.py` 的 `python_bin()` 子进程统一口径：对本机有价值，但需要与现有 backend dual/api 写链、JWT、治理样本同步逻辑一起整合，不能直接贴
+- `modify_tasks()` / `modify_task()` 原子读改写框架：方向是对的，但本机当前 `server.py` 已接入 backend dual/api 与异步刷新链，后续若要吸收，必须先做局部映射，不能生抄
+- 结论：本轮“定向同步”已经把**最值得先吸且低风险**的环境兼容层落完；剩余 server 原子更新框架属于下一层工作，不适合在当前生产魔改基线上无验证硬并
+   - `handle_review_action()` 增加“todos 未完成不能直接准奏完结”的校验。
+   - 这批改动对本机**高度相关**：当前服务器就是 host-native dashboard 常驻运行，这些修复会直接影响看板写链稳定性与并发安全。
+
+3. **前端 / dashboard 时间展示与交互层继续修正**
+   - 上游补了本地时区展示、TaskModal / SessionsPanel 时间归一、看板动画与前端时间工具封装。
+   - 这对本机 running dashboard 有实际影响，但优先级低于上面的后端/脚本安全与并发修复。
+
+4. **agents / docs / 远程 skills 生态继续前推**
+   - 上游新增 `qintianjian` agent。
+   - README 与 remote skills 文档改成以 `mmx_cli` / MiniMax skill 源为默认示例，并移除了旧的 broken default skills hub 口径。
+   - 这类更新对本机不是第一优先级阻塞，但如果后续要跟 upstream 文档口径对齐，不能继续沿用旧的官方 skills hub 说法。
+
+5. **backend 与测试层继续补强**
+   - 上游新增 QQ 渠道、任务并发 race 测试、dashboard review/dispatch 测试、task mutation race 修复等。
+   - 其中“任务并发写入竞争修复”与本机当前三省六部写链/调度链关系很近，值得优先审进去。
+
+#### 当前同步判断
+- **现在最该同步的不是整仓库生拉硬拽地 merge，而是优先吸收“路径/解释器兼容 + dashboard 并发安全 + file:// 技能路径防护”这三类改动。**
+- 原因很直接：
+  1. 它们和本机 host-native 安装环境强相关；
+  2. 对当前正在跑的 `edict-dashboard.service` / `edict-loop.service` 有直接收益；
+  3. 风险边界相对清晰，适合在本地大量未提交改动的情况下做定向吸收，而不是整仓一锅端。
+
+#### 下一步同步动作
+- 先继续细读并拆解上游更新文件，按三类处理：
+  1. **必须尽快同步到本机运行面的**：脚本路径兼容、Python 3.10+ 入口、dashboard 原子写任务、file:// 路径防护；
+  2. **需要结合本机现有魔改再判断的**：dashboard/server.py 大块逻辑、前端 dist / src、agents SOUL；
+  3. **暂先只记账不立刻落地的**：截图、设计文档、QQ 渠道、Windows PS 脚本、默认 skill 示例更新。
+- 同步吸收前必须先做备份/分支保护，避免把本机现有主线热修与上游新改动揉成不可回滚的一团。
+
+#### 受控对齐长期执行规则（新增）
+- **以后 `origin/main` 再升级，默认也按本轮这套“受控对齐”规则执行本地升级，不做无脑 merge、不做整仓硬覆盖。**
+- 默认执行顺序固定为：
+  1. `git fetch --all --prune`，确认 `HEAD / origin/main / upstream/main` 的真实提交差异；
+  2. 先看 `git diff --name-status origin/main...HEAD` 与当前 worktree / untracked 清单，确认本机生产魔改面；
+  3. 按三类分流：**必须保留** / **可以回归** / **继续定向同步**；
+  4. 先备份关键文件到 `/root/.hermes/backups/`，再做定向吸收；
+  5. 优先吸收对本机 host-native 运行面直接有收益且风险边界清晰的改动（如路径兼容、解释器入口、并发安全、防护补丁、运行态止血脚本）；
+  6. 对 `dashboard/server.py`、backend 写链、前端 bundle、systemd/deploy 相关大块改动，默认先做局部映射与验证，**禁止整文件覆盖式同步**；
+  7. 每轮升级后必须补做语法检查、关键脚本实跑、必要时补可逆 probe，并把**原因 / 过程 / 结果 / 仍待同步项**回写本文件。
+- 结论口径也固定：
+  - 若只是吸收了高优先级兼容层，要写成“**已完成定向同步，不等于已与 `origin/main` 完全一致**”；
+  - 若仍存在本机生产必需魔改或 worktree 未清，要明确写成“**分叉运行中，继续按受控对齐推进**”，不能误报“已同步完成”。
+
+#### 2026-04-29 09:00（北京时间）本机魔改面解释与受控对齐分叉结论
+##### A. 本机主要魔改面（是什么 / 为什么）
+1. **backend host-native + dual/export 过渡态**
+   - 现场 systemd 已是：`edict-dashboard.service -> EDICT_TASK_WRITE_MODE=dual`、`edict-loop.service -> EDICT_ENABLE_BACKEND_EXPORT=true`。
+   - `dashboard/server.py`、backend `api/tasks.py` / `api/legacy.py` / `services/task_service.py`、`scripts/export_backend_tasks_to_legacy_json.py` 等，都围绕“backend 主写 + legacy JSON 兼容导出”做了本机化改造。
+   - **为什么这样改：** 本机不是 README 里的演示态，而是 213.35.100.132 上的 host-native 生产过渡态；若只回到单 JSON 主路，前台、旧脚本与现网导出视图会直接断层。
+
+2. **三省六部治理升级主线能力落地**
+   - 已落地 `PendingConfirm / gate_checks / templateId / templateParams / targetDept / stalled / retry / escalate / blocked / autopsy`，并补了对应前后端与测试。
+   - 已补齐尚书省显式派部、review-action、dispatch-target 等产品/路由闭环。
+   - **为什么这样改：** 本机主线目标不是“保留开源默认形态”，而是把三省六部治理升级真正收口到可执行、可审议、可回溯的现网能力。
+
+3. **任务数据三层分离**
+   - 本机新增并使用：`tasks_runtime_view.json`、`tasks_governance_samples.json`、`tasks_source.json`。
+   - 配套脚本包括：`scripts/sync_governance_samples.py`、`scripts/rebuild_task_views.py`、`scripts/refresh_live_data.py`、改造后的 `scripts/sync_from_openclaw_runtime.py`。
+   - **为什么这样改：** 旧的单层 `tasks_source.json` 会把 runtime 噪音、治理样本、JJC 主任务混在一起，现场已经证明会污染前台并误伤调度判断；三层分离是本机稳定运行的必需改造。
+
+4. **OpenClaw / Feishu P2P / session 自愈与守护**
+   - 本机新增 `scripts/guard_openclaw_sessions.py`、P2P hotfix 文档与对应测试；并对 main/direct session 的坏指针、缺 transcript、长持锁、stale context window 做了防守逻辑。
+   - **为什么这样改：** 这些不是抽象优化，而是本机真实事故驱动出来的止血层；不保留的话，taizi / menxia / shangshu / Feishu direct 链会反复掉回旧坑。
+
+5. **运维脚本与主线文档体系**
+   - 本机新增/强化：`scripts/doctor_edict.sh`、`scripts/safe_update.sh`、`scripts/memory_backup.sh`、backend runtime/migration/deploy/systemd 脚本，以及 `docs/closeout.md`、`docs/governance-upgrade-map.md`、`docs/current-progress-board.md` 等交付链。
+   - **为什么这样改：** 本机已进入持续运维、回滚演练、事故回溯阶段，不能再只靠 README 或一次性调试命令维持。
+
+##### B. 本机 vs `origin/main` 分叉清单（受控对齐口径）
+###### B1. 必须保留
+- `dashboard/server.py`
+  - 原因：本机已接入 backend dual/api 写链、governance sample 同步、runtime guard、menxia/shangshu/taizi 现场止血逻辑；直接回归会把现网生产逻辑打回去。
+- backend 任务链相关：
+  - `edict/backend/app/api/legacy.py`
+  - `edict/backend/app/api/tasks.py`
+  - `edict/backend/app/models/task.py`
+  - `edict/backend/app/services/task_service.py`
+  - `edict/backend/app/workers/__init__.py`
+  - 未跟踪的 `edict/backend/app/services/notification_service.py`
+  - 未跟踪的 `edict/migration/versions/002_add_outbox_events.py`
+  - 原因：承载 backend host-native / dual-export 过渡态、legacy route 补路由、通知/outbox 等本机生产主链。
+- 三层数据与运行态治理脚本：
+  - `scripts/sync_from_openclaw_runtime.py`
+  - `scripts/refresh_live_data.py`
+  - 未跟踪的 `scripts/sync_governance_samples.py`
+  - 未跟踪的 `scripts/rebuild_task_views.py`
+  - 未跟踪的 `scripts/export_backend_tasks_to_legacy_json.py`
+  - 未跟踪的 `scripts/guard_openclaw_sessions.py`
+  - 原因：这是本机解决 runtime 噪音、治理样本沉淀、legacy 兼容出口、自愈守护的核心层。
+- 本机运维与发布链：
+  - `scripts/doctor_edict.sh`
+  - `scripts/safe_update.sh`（未跟踪）
+  - `scripts/memory_backup.sh`（HEAD 分叉）
+  - `scripts/check_backend_prereqs.sh` / `scripts/manage_backend_infra.sh` / `scripts/run_backend_component.sh` / `scripts/run_backend_migrations.sh` / `scripts/setup_backend_runtime.sh`（未跟踪）
+  - `deploy/systemd/*`、`deploy/backend/*`（未跟踪）
+  - 原因：这些是本机 host-native backend 常驻与可回滚运维链，不属于可随手删掉的实验物。
+- 主线收口文档与交付稿：
+  - `docs/closeout.md`
+  - `docs/current-progress-board.md`
+  - `docs/governance-upgrade-map.md`
+  - `docs/review-correction-notes.md`
+  - `docs/JJC-20260416-001-sansheng-governance-executable-review.md`（未跟踪）
+  - `docs/JJC-20260416-001-task-division-plan.txt`（未跟踪）
+  - `docs/backend-host-native-productionization.md`（未跟踪）
+  - `docs/openclaw-feishu-p2p-hotfix.md`（未跟踪）
+  - 原因：这些已经承载本机真实原因/过程/结果与交付物，不是可无损回归的普通文档偏差。
+
+###### B1-Priority. “必须保留”进一步拆分为 P0 / P1 / P2（本地升级优先级）
+
+**P0：升级时必须优先保护，误回归会直接打断现网主链**
+- `dashboard/server.py`
+  - 原因：当前 dashboard 既承担前台入口，又承担 backend dual/api 写链、legacy 兼容、runtime guard、menxia/shangshu/taizi 现场止血逻辑；误用上游整文件覆盖，最容易把现网写链和调度链直接打断。
+- backend 主写 / 兼容路由核心：
+  - `edict/backend/app/api/legacy.py`
+  - `edict/backend/app/api/tasks.py`
+  - `edict/backend/app/models/task.py`
+  - `edict/backend/app/services/task_service.py`
+  - `edict/backend/app/workers/__init__.py`
+  - `edict/backend/app/services/notification_service.py`
+  - `edict/migration/versions/002_add_outbox_events.py`
+  - 原因：这些文件直接决定 backend host-native、legacy review-action / dispatch-target、通知/outbox 是否还能工作；现场当前 `taskSource=backend_api_export`，已经不是可随手回退的演示态。
+- 三层数据与导出守护核心：
+  - `scripts/sync_from_openclaw_runtime.py`
+  - `scripts/refresh_live_data.py`
+  - `scripts/sync_governance_samples.py`
+  - `scripts/rebuild_task_views.py`
+  - `scripts/export_backend_tasks_to_legacy_json.py`
+  - 原因：当前 `live_status.taskLayers={'runtimeCount': 4, 'governanceSampleCount': 4, 'jjcArchiveCount': 34}`，说明前台现实就是靠三层数据在跑；误回归会把 runtime / governance sample / export 兼容视图重新搅成一锅。
+- OpenClaw / session 自愈守护：
+  - `scripts/guard_openclaw_sessions.py`
+  - 原因：这层直接对应 taizi / menxia / shangshu / Feishu direct 的真实历史事故；去掉后很容易重新掉回坏指针、缺 transcript、长持锁、stale context window 的旧坑。
+- 本轮已吸收且必须继续保的 host-native 兼容入口：
+  - `install.sh`
+  - `start.sh`
+  - `scripts/run_loop.sh`
+  - `scripts/apply_model_changes.py`
+  - `scripts/sync_agent_config.py`
+  - `scripts/sync_officials_stats.py`
+  - `scripts/utils.py`
+  - 原因：这些已经承接 `OPENCLAW_HOME` / `EDICT_PYTHON` / model apply / runtime sync 的本机真实运行入口，属于升级时优先保命层。
+
+**P1：升级时应尽量保住，不一定立刻炸，但会显著影响运维、回滚与持续收口效率**
+- 运维/回滚/基础设施脚本：
+  - `scripts/doctor_edict.sh`
+  - `scripts/check_backend_prereqs.sh`
+  - `scripts/manage_backend_infra.sh`
+  - `scripts/run_backend_component.sh`
+  - `scripts/run_backend_migrations.sh`
+  - `scripts/setup_backend_runtime.sh`
+  - `deploy/systemd/*`
+  - `deploy/backend/*`
+  - 原因：它们决定 backend host-native 能不能稳定部署、排障、回滚；即使暂时不影响当前进程继续跑，升级时丢掉会让后续运维重新回到裸手状态。
+- 关键主线文档：
+  - `docs/closeout.md`
+  - `docs/current-progress-board.md`
+  - `docs/governance-upgrade-map.md`
+  - `docs/review-correction-notes.md`
+  - 原因：这些文档已经承载“原因 / 过程 / 结果 / 当前阻塞 / 正确口径”；升级时若把它们冲掉，后面排障和交接会重新失忆。
+
+**P2：属于交付沉淀与专项证据，优先级低于 P0/P1，但仍应保留**
+- 正式交付稿与专项专题文档：
+  - `docs/JJC-20260416-001-sansheng-governance-executable-review.md`
+  - `docs/JJC-20260416-001-task-division-plan.txt`
+  - `docs/backend-host-native-productionization.md`
+  - `docs/openclaw-feishu-p2p-hotfix.md`
+  - 原因：它们不直接控制当前服务是否继续跑，但对主线收口、复盘和后续对外/对内说明很重要；升级时不该丢，但保护优先级低于 P0/P1 运行面。
+
+**本地升级执行优先级结论**
+1. **先护 P0**：任何 `origin/main` 同步都必须先确保 P0 文件不被整块覆盖；必要时宁可暂缓同步，也不能先动现网主链。
+2. **再护 P1**：确认运维脚本、systemd/deploy、主线文档还在，再继续吸收上游功能修复。
+3. **最后整理 P2**：交付稿和专项文档可在升级后统一回补，但不应成为阻塞 P0/P1 的理由。
+4. 真正的本地升级顺序应该是：**P0 保命 → P1 保运维与可回滚 → P2 保交付沉淀 → 再吸收 `origin/main` 新能力。**
+
+###### B2. 可以回归 / 可择机清理
+- `dashboard/dist/assets/*` 与 `dashboard/dist/index.html` 的旧 bundle 漂移
+  - 原因：它们本质是构建产物，不应长期作为手工分叉面；确认新构建产物稳定后可统一回到标准构建输出。
+- `.gitignore`、`README.md`、部分 docs 表述偏差
+  - 原因：其中一部分只是为了本机现场临时补口径，不一定都要长期背离 `origin/main`；后续可择机收敛到更干净的说明层。
+- 部分测试新增但仅覆盖本机临时收口口径的条目
+  - 例如某些专项 smoke / 文档校正文案测试，后续若主链稳定、实现并入上游，可重整或合并，不一定永久保持现在的散装状态。
+
+###### B3. 继续定向同步（不要硬并）
+- `origin/main` 新增但本机还没完整吸收的高价值项：
+  - `dashboard/server.py` 的 `python_bin()` 子进程统一（已落地）
+  - `modify_tasks()` / `modify_task()` 原子读改写框架（待按本机 dual/api 写链做局部映射）
+  - 时间展示本地化、TaskModal / SessionsPanel 时间归一（待前端源码与构建产物一起收口）
+  - `fix(flow): prevent premature task completion before review`（已落地 fallback 校验）
+  - `fix(dashboard): handle missing OpenClaw CLI during dispatch`（待按本机 dispatch 入口补兜底）
+  - `support OPENCLAW_HOME env var`（本轮已吸收大半脚本层，但还未做到全仓统一）
+  - `qintianjian` agent / 动画与 UI 体验项（已纳入下一批受控对齐清单，但优先级低于写链稳定性）
+- **为什么不是直接 merge：** 这些改动方向大多是对的，但本机 `server.py` / backend / frontend 已经深度挂着生产魔改，必须按局部映射 + 实跑验证吸收，不能整块贴。
+- **本轮执行顺序已固定：** 1）时间字段统一本地时区展示；2）dispatch 缺失 OpenClaw CLI 时的兜底；3）`modify_tasks()` / `modify_task()` 原子更新框架；4）`qintianjian` agent；5）动画 / UI 类改动。先收写链与时间口径，再碰生态和体验层。
+
+##### C. 本轮受控对齐结论
+- **本机不是“乱改了一堆”，而是已经把 `origin/main` 的通用仓库改造成 213.35.100.132 上的 edict/OpenClaw 生产过渡态。**
+- **因此当前不能以“是否与 `origin/main` 完全一致”作为唯一目标，而要以“哪些本机生产魔改必须保留、哪些可回归、哪些继续定向同步”作为升级准绳。**
+- 当前正确口径应保持为：**分叉运行中，继续按受控对齐推进。**
+- 截至 2026-04-29 09:42（北京时间），本轮又已实际落地两项对本机高价值且低风险的对齐：
+  1. `dashboard/server.py` 已补 `python_bin()`，并把本机仍残留的关键子进程调用从硬编码 `python3` 改为走 `EDICT_PYTHON / sys.executable` 统一入口；
+  2. `dashboard/server.py::handle_review_action()` 在本机 fallback 路径中已补回 **Review 态 todos 未完成不能直接准奏完结** 校验，避免未完子任务被误提前收口。
+- 本轮落地后已再次实跑通过：
+  - `python3 -m py_compile dashboard/server.py scripts/utils.py scripts/sync_agent_config.py scripts/sync_from_openclaw_runtime.py scripts/sync_officials_stats.py scripts/apply_model_changes.py`
+  - `python3 scripts/sync_agent_config.py` → `12 agents synced`
+  - `python3 scripts/sync_from_openclaw_runtime.py` → `synced 4 tasks from openclaw runtime in 152ms`
+  - `python3 scripts/sync_officials_stats.py` → `11 officials | cost=¥12.03 | top=太子`
+- 因此当前受控对齐状态更新为：**P0 保护规则已落盘，且已继续吸收一批本机可安全落地的 `origin/main` 高价值改动；本机仍未与 `origin/main` 完全一致，但已按“P0 保命 → P1 保运维与可回滚 → P2 保交付沉淀 → 再吸收 `origin/main`”的顺序进入持续收口。**
+
+---
+
+## 4. 最新运行态专题：OpenClaw / taizi / windhub 阻塞
 
 ---
 
@@ -229,9 +638,38 @@
 - 但截至本轮复核，还**没有拿到新 session 上的 post-restart DM 实时闭环样本**；因此当前状态应表述为：**旧脏 direct session 已成功切离，运行态正在等待新 DM 窗口的活样本验证**，不能提前写成“已彻底恢复”。
 
 ### 4.3 当前定性
-- **消息进得来，而且 completion 也仍在继续出现**
-- **当前不是“DM 完全断链”，而是 taizi 直聊 session 进入长跑/长持锁的不稳定态**
-- **主问题已收敛到 live gateway 持有 direct session lock、会话迟迟不收口，以及偶发消息整理脏状态**
+- **消息入口与 completion 后续样本已重新出现，taizi direct DM 主链可继续闭环。**
+- **当前可从 blocker 降级到“基本收口 / 转监控”，但还不能宣告完全结案。**
+- **风险已从“DM 完全断链”收敛为：direct session 轮转后的长跑抖动、旧窗口残留歧义，以及 `lane wait exceeded` 等并发压力信号仍需继续盯。**
+
+### 4.3.1 2026-04-29 凌晨 taizi direct DM 监控结论（北京时间对齐）
+#### 最新结论
+- **可往“基本收口 / 转监控”推进，但监控不能撤。**
+- 这轮不再把前一日日志中的 UTC `19:xx` 直接当作“今天 06:xx 的新进展”混报；已按北京时间改为：**先看 `/tmp/openclaw/openclaw-2026-04-29.log`，若当日日志还没业务样本，再回看 `/tmp/openclaw/openclaw-2026-04-28.log` 做历史补证。**
+
+#### 现场证据
+- `sessions.json` 中 direct key `agent:taizi:feishu:direct:ou_ed2187f2ad27e0b7876913371e72c06a` 已从旧会话 `34ff0667-d955-4dc3-9fc3-ad29ffa3678a` 轮转到 **`bf9d14e8-a004-4fcd-8c55-5b622fdf5bec`**。
+- 对历史主日志 `/tmp/openclaw/openclaw-2026-04-28.log` 的补证显示：在最初盯住的 `19:04:18Z / 19:04:35Z` 两个 ingress 之后，后续已重新出现多轮闭环：
+  - `dispatch complete @ 2026-04-28T19:22:06.444Z`
+  - `dispatch complete @ 2026-04-28T20:44:10.490Z`
+  - `dispatch complete @ 2026-04-28T20:59:47.011Z`
+  - `dispatch complete @ 2026-04-28T21:14:33.315Z`
+- 同批后续窗口也已看到新的 `received message / dispatching to agent`，说明不是“只进不出”持续主导现场。
+- 错误面在这轮监控里未继续恶化：
+  - `surface_error = 60`，未新增
+  - `embedded run timeout = 56`，未见更晚增长证据
+  - `HTTP 524` 未见比已知窗口更晚的新增长证据
+- 但并发压力信号仍在：`lane wait exceeded` 仍是需要继续盯的运行噪声/风险项。
+
+#### 北京时间 06:00 之后的当前窗口判断
+- 当前北京时间已到 **2026-04-29 06:05**。
+- 当日日志 `/tmp/openclaw/openclaw-2026-04-29.log` 目前仅有少量非 taizi direct DM 业务行，**尚未出现新的 `p2p chat entered / received message / dispatching to agent / dispatch complete` 样本**。
+- 因此此刻更准确的口径不是“06 点又有新闭环”或“06 点再次回退”，而是：**当前日日志仍是安静窗口；是否继续稳定闭环，需等 29 号日志出现新的 direct DM 业务样本后再判。**
+
+#### 当前口径
+- **taizi direct DM 主链已从 blocker 降到“基本收口 / 转监控”。**
+- **今天 06 点前后还没有新业务样本进入 29 号日志，因此当前是安静窗口，不算新恶化。**
+- **后续只要 29 号日志出现新 ingress 但没有 completion，就要立即把状态重新打回未收口 / blocker。**
 
 ### 4.4 2026-04-28 taizi 定向修复记录（原因 / 过程 / 结果）
 #### 原因
