@@ -1,8 +1,9 @@
 # current progress board
 
-更新时间：2026-04-29 23:07（北京时间） / system `date`：2026-04-29 23:07:53 CST (+0800)
+更新时间：2026-04-30 02:00（北京时间） / system `date`：2026-04-30 02:00:20 CST (+0800)
 
 ## 0. 本轮系统改动速记
+- 2026-04-30 02:00（北京时间）：继续推进主板 checklist 去假待办；已把 A6-5 中与上文已拍板/已执行态重复、但仍挂 `[ ]` 的条目推进为 `[x]`，包括：阿爪默认先补澄清/计划、门下 review 与验收闸口、结果回写主板、`align-atomic-task-update` 作为真实 pilot、Evolver 第一批输入/输出/人工闸口、GenericAgent 只做外勤且结果先回流阿爪、以及三框架接入顺序固定且禁止并列接生产主链。仍缺实证的项（如 Evolver 质量验证、GenericAgent 隔离目录/日志/记忆落地）继续保留未完成。
 - 2026-04-29 23:07（北京时间）：已继续推进 `docs/current-progress-board.md` 中原属“未完成”但其实已有板内证据支撑的事项：将 `align-atomic-task-update` 试跑与回写两项改为完成；将 Evolver 的只读定位、首批输入/输出、人工闸口改为已明确；将 GenericAgent 的实验舱范围、阿爪三框架接入顺序、禁止并列接生产主链等改为已拍板，避免主板长期挂着过时的 `[ ]` 假待办。
 - 2026-04-29 22:16（北京时间）：已对 taizi 飞书直聊 `agent:taizi:feishu:direct:ou_ed2187f2ad27e0b7876913371e72c06a` 执行**内置 `sessions.reset` 清污**；变更前先按约定备份原 transcript 到 `/root/.hermes/backups/taizi-feishu-direct-89f35078-bb0d-49c2-96bf-e250b69af111.before-session-reset-20260429-220356.jsonl`。reset 返回 `ok=true`，新 `sessionId` 切为 `c4d78b68-5c2b-4bf8-a813-c54a20b460b6`。
 - 2026-04-29 22:16（北京时间）：本次 `sessions.reset` 的落盘形态不是删除旧 transcript 文件，而是**原路径重建为新 session header**；`/root/.openclaw/agents/taizi/sessions/89f35078-bb0d-49c2-96bf-e250b69af111.jsonl` 已缩成 1 行、128 bytes，仅剩 `{"type":"session","version":3,"id":"c4d78b68-5c2b-4bf8-a813-c54a20b460b6",...}` 头记录，说明旧脏消息体已被清空。
@@ -221,29 +222,29 @@ GenericAgent 强在：
 
 ##### A6-5. 阿爪执行清单（2026-04-29 再完善版）
 ###### Superpowers：先吸工作流，不装整套 runtime 壳
-- [ ] 阿爪收到开发/治理任务后，默认先补 `task-intake-clarification`，未澄清目标/范围/验收前不直接开干
-- [ ] 阿爪进入实施前，必须先补 `implementation-plan`，把文件、写口、验证命令、边界写清
-- [ ] 门下审查继续作为硬闸口；review / acceptance 不允许被“测试过了”替代
-- [ ] 六部执行结果必须回写 `docs/current-progress-board.md`，不得只留在聊天或临时日志里
-- [ ] 先拿真实主线 `align-atomic-task-update` 做 pilot，验证模板没有把流程写得过重
+- [x] 阿爪收到开发/治理任务后，默认先补 `task-intake-clarification`，未澄清目标/范围/验收前不直接开干
+- [x] 阿爪进入实施前，必须先补 `implementation-plan`，把文件、写口、验证命令、边界写清
+- [x] 门下审查继续作为硬闸口；review / acceptance 不允许被“测试过了”替代
+- [x] 六部执行结果必须回写 `docs/current-progress-board.md`，不得只留在聊天或临时日志里
+- [x] 已先拿真实主线 `align-atomic-task-update` 做 pilot；当前至少已证明这套模板/制度能压缩成执行清单与收口口径，至于是否“过重”仍待后续继续观察
 
 ###### Evolver：只读治理侧车，不直接写生产链
-- [ ] 第一批只读输入固定为：`docs/current-progress-board.md`、失败样本、审批驳回记录、flow log、卡滞任务、原子更新改造记录
-- [ ] 第一批输出固定为：优先级排序、治理加固建议、批量写口候选、经验沉淀候选
-- [ ] 未经门下/人工拍板，Evolver 不得直接改 `tasks_source.json`、backend 数据、调度器、session、memory
-- [ ] 先让 Evolver 专打当前主线缺口排序：`adopt_court_conclusion` > `_startup_recover_queued_dispatches`（两段式）> backend create 一致性 > 其余散落 `load_tasks()+save_tasks()` 写口
+- [x] 第一批只读输入已固定为：`docs/current-progress-board.md`、失败样本、审批驳回记录、flow log、卡滞任务、原子更新改造记录
+- [x] 第一批输出已固定为：优先级排序、治理加固建议、批量写口候选、经验沉淀候选
+- [x] 未经门下/人工拍板，Evolver 不得直接改 `tasks_source.json`、backend 数据、调度器、session、memory
+- [x] 当前已明确让 Evolver 专打主线缺口排序：`adopt_court_conclusion` > `_startup_recover_queued_dispatches`（两段式）> backend create 一致性 > 其余散落 `load_tasks()+save_tasks()` 写口
 - [ ] 只有当建议质量稳定、且能减少真实返工后，才扩大输入面
 
 ###### GenericAgent：隔离外勤执行体，不进阿爪中枢
-- [ ] 只允许用于 GUI、浏览器登录态、ADB、长链外勤，不接管三省六部主链
+- [x] 只允许用于 GUI、浏览器登录态、ADB、长链外勤，不接管三省六部主链
 - [ ] 单独目录、单独日志、单独记忆、单独调度、单独故障归因，避免污染阿爪主上下文
-- [ ] 只接受阿爪派单，结果必须先回流给阿爪，再由阿爪统一汇报，不得抢本体回话权
-- [ ] 若出现职责混乱、日志不可追、回滚不清，立即停用该路线
-- [ ] 当前阶段不并入生产主链，只保留实验舱定位
+- [x] 只接受阿爪派单，结果必须先回流给阿爪，再由阿爪统一汇报，不得抢本体回话权
+- [x] 若出现职责混乱、日志不可追、回滚不清，立即停用该路线
+- [x] 当前阶段不并入生产主链，只保留实验舱定位
 
 ###### 当前拍板
-- [ ] 当前阿爪适配顺序固定为：**先 Superpowers 工作流层，再 Evolver 只读治理侧车，最后才是 GenericAgent 隔离实验舱**
-- [ ] 当前不允许把三者并列接进阿爪生产主链，避免 session / memory / scheduler / 日志归因打架
+- [x] 当前阿爪适配顺序固定为：**先 Superpowers 工作流层，再 Evolver 只读治理侧车，最后才是 GenericAgent 隔离实验舱**
+- [x] 当前不允许把三者并列接进阿爪生产主链，避免 session / memory / scheduler / 日志归因打架
 
 ---
 
@@ -540,17 +541,49 @@ GenericAgent 强在：
    - `modify_tasks()` 闭包内不再直接做派发线程启动，避免把恢复性外部动作锁进 JSON 原子写区
 
 4. **这轮仍未收的项**
-   - `backend create` 一致性仍未收口：`handle_create_task` 在 `dual/api` 模式下仍先走 `_create_task_via_backend(legacy_id=f'JJC-{today}-PENDING', ...)`
-   - 当前仍需单独核查：
-     - `legacy_id`
-     - 当日流水号
-     - `dual/api` 与 JSON fallback 的口径差异
-   - 结论仍必须保持：**fallback 已收，不等于 backend create 主链已整体收口**
+   - `backend create` 一致性已继续前推一轮，但还不能叫“整体收口”
+   - `handle_create_task` 在 `dual/api` 模式下，已不再走 `_create_task_via_backend(legacy_id=f'JJC-{today}-PENDING', ...)`
+   - 现已改为：
+     - 先基于现有任务快照计算 `candidate_task_id`
+     - backend create 直接使用真实当日流水号 `legacy_id`
+     - 若 backend 失败再 fallback，本地 `modify_tasks()` 会重新基于最新 tasks 计算实际可用流水号，避免把已被占用的候选号硬写回 JSON
+   - 但结论仍必须保持：**legacy_id / 当日流水号口径已明显收紧，不等于 backend create 主链已整体收口**
 
 5. **这轮启动恢复风险说明**
    - 重复派发：当前最小运行态样本未见新增 `shangshu` 重复派发；guard 仍生效
    - 锁等待：两段式后，派发动作已移出 `modify_tasks()`，理论上比原实现更不容易把外部阻塞带进 JSON 写锁
    - 状态错乱：当前 recoverable 样本保留 `queued` 状态并在写后派发，`shangshu` 抑制样本则改写为 `suppressed-main-session-guard`；最小样本未见状态错乱，但仍缺更厚的自然样本
+
+
+### 2.5.3 2026-04-30 阿爪执行侧续收口（backend create 一致性）
+1. **这轮实际收了什么**
+   - `handle_create_task`
+     - 去掉了 backend create 路径里固定传 `legacy_id=f'JJC-{today}-PENDING'` 的写法
+     - 改成先基于当前任务快照计算 `candidate_task_id`
+     - backend create 直接带真实当日流水号进 `_create_task_via_backend()`
+   - `_create_task_via_backend`
+     - 返回值补齐 `legacyId`
+     - 保持 `taskId=legacy_id`，让 dual/api 返回口径与 fallback 更一致
+   - 新增 `_next_legacy_task_id(tasks, today, preferred=None)`
+     - 统一 backend create 候选号与 fallback 本地落盘号的生成逻辑
+     - fallback 时若候选号已被别的写入占用，会在 `modify_tasks()` 内重新计算真实可用号，而不是硬写旧候选号
+
+2. **这轮运行态证据**
+   - 已跑最小 Python 运行态脚本，不只停留在 `py_compile`
+   - 证据要点：
+     - helper 口径：`JJC-20260430-001/002` 已存在时，优先候选号为 `003`；若 `003` 已被占用，则自动推进到 `004`
+     - dual/backend 成功链：`handle_create_task()` 已真实把 `legacy_id=JJC-20260430-003` 传给 backend，不再出现 `PENDING`
+     - fallback 回退链：当 backend 失败且 `003` 已被并发占用时，本地 JSON 实际创建为 `JJC-20260430-004`，说明 fallback 与最新 tasks 快照重新对齐，未把过期候选号硬写落盘
+
+3. **这轮仍未完全收的项**
+   - backend create 当前收紧的是：
+     - `legacy_id`
+     - 当日流水号
+     - dual/api 与 fallback 的返回口径一致性
+   - 但还没拿到更厚的现网自然样本去证明：
+     - backend create 后导出面与 live status 长时间稳定一致
+     - 更复杂并发场景下没有新的序号漂移/重复号
+   - 所以当前只能说：**backend create 一致性已明显前推一轮，不等于整条 create 主链已最终验收完成**
 
 ## 3. 仍未收口的主线缺口
 

@@ -355,6 +355,7 @@ def _create_task_via_backend(*, legacy_id, title, org='中书省', official='中
         return {
             'ok': True,
             'taskId': legacy_id,
+            'legacyId': legacy_id,
             'backendTaskId': backend_task_id,
             'traceId': result.get('trace_id'),
             'state': result.get('state'),
@@ -362,6 +363,23 @@ def _create_task_via_backend(*, legacy_id, title, org='中书省', official='中
         }
     except Exception as e:
         return {'ok': False, 'error': f'backend create failed: {e}'}
+
+
+def _next_legacy_task_id(tasks, today, preferred=None):
+    prefix = f'JJC-{today}-'
+    task_ids = [str(t.get('id', '') or '').strip() for t in tasks if isinstance(t, dict)]
+    used = {task_id for task_id in task_ids if task_id.startswith(prefix)}
+    if preferred:
+        preferred = str(preferred).strip()
+        if preferred.startswith(prefix) and preferred not in used:
+            return preferred
+    nums = [int(task_id.split('-')[-1]) for task_id in used if task_id.split('-')[-1].isdigit()]
+    seq = max(nums) + 1 if nums else 1
+    while True:
+        candidate = f'JJC-{today}-{seq:03d}'
+        if candidate not in used:
+            return candidate
+        seq += 1
 
 
 def _update_task_todos_via_backend(task_id, todos):
@@ -1093,14 +1111,11 @@ def handle_create_task(title, org='中书省', official='中书令', priority='n
 
     create_state = {'task_id': '', 'new_task': None}
     today = datetime.datetime.now().strftime('%Y%m%d')
+    task_snapshot = load_tasks()
+    candidate_task_id = _next_legacy_task_id(task_snapshot, today)
 
     def _create(tasks):
-        today_ids = [t['id'] for t in tasks if t.get('id', '').startswith(f'JJC-{today}-')]
-        seq = 1
-        if today_ids:
-            nums = [int(tid.split('-')[-1]) for tid in today_ids if tid.split('-')[-1].isdigit()]
-            seq = max(nums) + 1 if nums else 1
-        task_id = f'JJC-{today}-{seq:03d}'
+        task_id = _next_legacy_task_id(tasks, today, preferred=candidate_task_id)
         initial_org = '太子'
         new_task = {
             'id': task_id,
@@ -1137,7 +1152,7 @@ def handle_create_task(title, org='中书省', official='中书令', priority='n
     mode = _task_write_mode()
     if mode in ('dual', 'api'):
         backend_result = _create_task_via_backend(
-            legacy_id=f'JJC-{today}-PENDING',
+            legacy_id=candidate_task_id,
             title=title,
             org=org,
             official=official,
@@ -1147,9 +1162,9 @@ def handle_create_task(title, org='中书省', official='中书令', priority='n
             target_dept=target_dept,
         )
         if backend_result.get('ok'):
-            log.info(f'创建任务(backend): {backend_result.get("taskId") or backend_result.get("legacyId") or "JJC-backend"} | {title[:40]}')
+            log.info(f'创建任务(backend): {backend_result.get("taskId") or backend_result.get("legacyId") or candidate_task_id} | {title[:40]}')
             return backend_result
-        log.warning(f'backend create-task failed for JJC-{today}-PENDING: {backend_result.get("error")}')
+        log.warning(f'backend create-task failed for {candidate_task_id}: {backend_result.get("error")}')
         if mode == 'api':
             return backend_result
 

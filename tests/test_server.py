@@ -1668,6 +1668,68 @@ def test_handle_create_task_dual_mode_uses_backend_without_local_json(monkeypatc
     assert dispatch_calls == []
 
 
+
+def test_next_legacy_task_id_prefers_candidate_when_unused():
+    import server as srv
+
+    tasks = [
+        {'id': 'JJC-20260430-001'},
+        {'id': 'JJC-20260430-002'},
+    ]
+
+    assert srv._next_legacy_task_id(tasks, '20260430', preferred='JJC-20260430-003') == 'JJC-20260430-003'
+
+
+def test_next_legacy_task_id_skips_used_preferred_and_advances():
+    import server as srv
+
+    tasks = [
+        {'id': 'JJC-20260430-001'},
+        {'id': 'JJC-20260430-002'},
+        {'id': 'JJC-20260430-003'},
+    ]
+
+    assert srv._next_legacy_task_id(tasks, '20260430', preferred='JJC-20260430-003') == 'JJC-20260430-004'
+
+
+def test_handle_create_task_dual_mode_uses_real_daily_legacy_id_instead_of_pending(monkeypatch):
+    import server as srv
+
+    monkeypatch.setattr(srv, 'TASK_WRITE_MODE', 'dual', raising=False)
+    monkeypatch.setattr(srv, 'load_tasks', lambda: [{'id': 'JJC-20260430-001'}, {'id': 'JJC-20260430-002'}])
+
+    class _FakeNow:
+        @staticmethod
+        def now():
+            import datetime
+            return datetime.datetime(2026, 4, 30, 9, 0, 0)
+
+    monkeypatch.setattr(srv.datetime, 'datetime', _FakeNow, raising=False)
+
+    backend_calls = []
+    monkeypatch.setattr(
+        srv,
+        '_create_task_via_backend',
+        lambda **kwargs: backend_calls.append(kwargs) or {
+            'ok': True,
+            'taskId': kwargs['legacy_id'],
+            'legacyId': kwargs['legacy_id'],
+            'backendTaskId': 'uuid-backend-2',
+            'message': 'backend created',
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(srv, 'dispatch_for_state', lambda *args, **kwargs: None)
+
+    result = srv.handle_create_task('这是一个足够长的 backend 日流水测试标题')
+
+    assert result['ok'] is True
+    assert result['taskId'] == 'JJC-20260430-003'
+    assert result['legacyId'] == 'JJC-20260430-003'
+    assert backend_calls[0]['legacy_id'] == 'JJC-20260430-003'
+    assert 'PENDING' not in backend_calls[0]['legacy_id']
+
+
 def test_handle_create_task_dual_mode_falls_back_to_legacy_when_backend_fails(monkeypatch):
     import server as srv
 
