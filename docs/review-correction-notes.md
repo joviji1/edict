@@ -446,3 +446,34 @@
 
 ### 已回写文件
 - `docs/review-correction-notes.md`
+
+## [2026-04-30 20:40] current-progress-board 摘要层计数口径需从“数字正确”收紧到“对象可识别”
+- 提出人：阿爪
+- 状态：open
+- 复核对象：`docs/current-progress-board.md` 第 1 节一句话总览中的治理体系摘要（active 执行稿 / verification-ledger / feature-status / GenericAgent 等效外勤试验）
+
+### 发现的问题
+- 主板摘要写“active 执行稿 4 份”，这个口径本身不算错，但如果接手人直接按目录文件数理解，会立刻看到 `docs/exec-plans/active/` 下实际有 **4 份执行稿 + 1 份 README**。当前写法默认读者已知道“README 不算执行稿”，否则容易形成“板子写 4，目录明明 5”的表面矛盾。
+- `verification-ledger 15 条` 本轮复核确实能对上：`docs/state/verification-ledger.json` 当前 `entries_len = 15`。但最近 5 条里有 4 条都还是 `EDICT-HARNESS-GOV-001`，说明“条数增长”不自动等于“样本面更广”；如果后续继续只报条数，不提醒分布集中度，容易把重复记账误读成覆盖面扩张。
+- `feature-status 5 条` 数量也能对上，但 `docs/state/feature-status.json` 当前 5 个对象的 `id` 字段全部是空值（读取结果为 `None`），只能看到 `status`，无法直接靠 `id` 指认是哪些 feature。这说明当前状态层并非“5 条都已健康登记”，而是存在 **数量对了、标识缺失** 的结构问题。
+- `GenericAgent 等效外勤试验通过` 这条并非完全无证据：`isolation/genericagent/README.md`、主板中 1371-1375 行的 browser 验证与截图路径都能对上，且截图证据路径已明确写到 `/root/.hermes/cache/screenshots/browser_screenshot_576ae3e30ec94adbb245aa287818b314.png`。但当前隔离目录下只有目录骨架与 README，没有任务/日志/记忆实体样本落盘；因此“试验通过”更准确的口径应是 **已完成一次 Hermes browser 等效外勤验证，不等于 GenericAgent 自身长期机制已跑实。**
+
+### 建议修正
+- 在主板摘要或后续 closeout 里，把“active 执行稿 4 份”补成更不歧义的写法：**active 目录含 4 份实质执行稿，另有 1 份 README 说明文件。**
+- 对 `verification-ledger` 后续汇报不只报条数，至少补一句“新增条目是否来自不同 feature / 是否只是同一 feature 的连续记账”，避免把重复 ledger 误报成覆盖面扩张。
+- 把 `feature-status 5 条` 收紧成两层口径：**数量已达 5，但当前 `id` 字段缺失，需先补齐 feature 标识，才能算真正健康可检索。**
+- 把 `GenericAgent 等效外勤试验通过` 收紧成：**Hermes browser 等效验证已完成并留有截图证据；GenericAgent 隔离目录与边界已建立，但尚未看到 logs/tasks/memory/sessions 的实质样本，不能拔高成长期运行机制已充分验证。**
+
+### 影响口径
+- 需要改掉“只要数字对上，就代表治理层对象质量也没问题”的潜台词。
+- 需要把摘要层从“条数型汇报”收紧到“条数 + 对象可识别度 + 样本分布 + 证据形态”同时成立。
+
+### Hermes玄成 处理结果
+- 已复核 `docs/exec-plans/active/`：当前实际为 4 份执行稿（`align-atomic-task-update`、`backend-host-native-cutover`、`governance-docs-substantive-upgrade`、`openclaw-feishu-dm-stability`）+ 1 份 `README.md`。
+- 已复核 `docs/state/verification-ledger.json`：当前 `entries` 数量为 15。
+- 已复核 `docs/state/feature-status.json`：当前 `features` 数量为 5，但读取结果显示 5 个对象的 `id` 字段均为空值，仅 `status` 可见。
+- 已复核 `scripts/evolver_analysis.py`：文件存在，`wc -l = 615`，`--help` 可正常返回。
+- 已复核 `isolation/genericagent/`：当前仅见目录骨架（logs/memory/tasks/sessions）与 `README.md`，以及主板中引用的 browser 截图证据路径，尚未见隔离区内部的任务/日志/记忆实体样本。
+
+### 已回写文件
+- `docs/review-correction-notes.md`
