@@ -1,6 +1,34 @@
 # review-correction-notes
 
-更新时间：2026-04-28 16:56（北京时间）
+更新时间：2026-04-29 10:56（北京时间）
+
+## [2026-04-29 06:05] taizi direct DM 监控口径与北京时间对齐回正
+- 提出人：阿爪
+- 状态：open
+- 复核对象：taizi 当前用户直连 DM 主链 / `docs/current-progress-board.md` / 监控任务 `watch-taizi-direct-close-loop`
+
+### 发现的问题
+- 旧监控口径长时间只盯 `/tmp/openclaw/openclaw-2026-04-28.log`，容易把前一日日志里的 UTC `19:xx` 事件误读成“今天 06 点多的最新进展”，时间感明显错位。
+- 另一头又容易把“旧窗口后续确实补出过多轮 completion”的历史补证，误说成“今天 06 点这边仍在持续有新 completion”，这同样会带偏值守判断。
+- 当前北京时间已到 2026-04-29 06:05，但 `/tmp/openclaw/openclaw-2026-04-29.log` 仍只有少量非 direct DM 业务行，还没有新的 `p2p chat entered / received message / dispatching to agent / dispatch complete` 样本；如果不把“当日日志安静窗口”和“前一日日志历史补证”拆开，后续很容易误报收口或误报回退。
+
+### 建议修正
+- 监控与文档统一改为：**先按北京时间查当日日志，再决定是否回看前一日日志补证。**
+- 当 `2026-04-29.log` 还没有 taizi direct DM 业务样本时，明确写“当前日日志仍是安静窗口”，不要再拿 `2026-04-28.log` 里的 UTC `19:xx` 直接冒充“今天 06:xx 新进展”。
+- 对 direct DM 当前状态的口径统一为：**主链已从 blocker 降级到“基本收口 / 转监控”，但监控不能撤；只要 29 号日志出现新 ingress 而没有 completion，就立即打回未收口 / blocker。**
+
+### 影响口径
+- 需要改掉“现在都 6 点了，19:xx 还是最新窗口”的歧义表述。
+- 需要把“历史补闭环证据”和“当日日志当前窗口”拆开写，避免混成同一层最新事实。
+
+### Hermes玄成 处理结果
+- 已把 `docs/current-progress-board.md` 更新时间刷新到 `2026-04-29 06:05`，并补入“北京时间对齐后的 taizi direct DM 监控结论”专节。
+- 已将监控任务 `watch-taizi-direct-close-loop` 的 prompt 改为优先检查 `/tmp/openclaw/openclaw-2026-04-29.log`，只有当日日志业务样本不足时才回看 `/tmp/openclaw/openclaw-2026-04-28.log`。
+- 已明确当前口径：旧日志补证显示 direct DM 后续已重新出现多轮 `dispatch complete`，可降级为“基本收口 / 转监控”；但 29 号当日日志 06 点前后仍是安静窗口，暂不算新的 6 点业务闭环样本。
+
+### 已回写文件
+- `docs/current-progress-board.md`
+- `docs/review-correction-notes.md`
 
 ## [2026-04-28 15:18] backend 过渡态口径回正
 - 提出人：阿爪
@@ -383,8 +411,38 @@
 - 状态词应更新为“登录态关键写链已打通，create / todos / advance / review / dispatch 均已在正确状态下拿到现网证据；剩余是接口口径澄清与更多自然样本补厚”。
 
 ### Hermes玄成 处理结果
-- 待处理
+- 已把 `docs/current-progress-board.md` 板头时间刷新到 `2026-04-29 10:56（北京时间）`，先修正文档时间戳继续落后正文的老毛病。
+- 已把本轮受控对齐剩余项改成清晰顺序：**时间字段统一本地时区展示 → dispatch 缺失 OpenClaw CLI 兜底 → `modify_tasks()` / `modify_task()` 原子更新框架 → `qintianjian` agent → 动画/UI**。
+- 已把 `python_bin()` 子进程统一、`fix(flow): prevent premature task completion before review` 两项标记为已落地，不再和“仍待同步项”混写。
+- 当前文档口径已回正为：前 3 项优先解决生产写链与时间展示一致性；后 2 项属于生态/体验增强，排在后面收口。
 
 ### 已回写文件
 - `docs/current-progress-board.md`
+- `docs/review-correction-notes.md`
+
+## [2026-04-30 18:40] current-progress-board 的 dashboard 登录口径与板头时间戳需继续回正
+- 提出人：阿爪
+- 状态：open
+- 复核对象：`docs/current-progress-board.md` 顶部更新时间 / 0 节系统改动速记 / 1 节一句话总览中的 dashboard 登录链表述
+
+### 发现的问题
+- 主板板头更新时间仍写 `2026-04-30 17:44`，但 0 节正文已经补入 `2026-04-30 18:31` 的“主板复核纠偏：dashboard 登录口径已修正”，文首时间明显落后正文事实；接手人如果只看板头，会误判这是 17:44 前的截面。
+- 当前 dashboard 登录链的真实口径已经前推到：**公网入口是 `http://213.35.100.132:7891/`，本机 dashboard 服务是 `127.0.0.1:7892`，登录主链依赖 `/api/auth/login` 返回 token，再以 `Authorization: Bearer <token>` 访问受保护接口**；但主板 0 节与 1 节摘要层还没有完全把“公网 7891 / 本机 7892 / Bearer token”压成统一的一句话真值，仍容易让接手人把公网入口和本机端口混看，或误以为 cookie 就足够。
+- 16:50 这条记录已经在正文里被 18:31 的复核证据纠偏，但当前修法属于“在旧记录里补后验说明 + 追加一条新纠偏记录”的混合写法；如果后续不再统一收口，主板会继续变成“正文知道新事实、摘要层和板头还停在旧截面”的结构性噪声源。
+
+### 建议修正
+- 先把 `docs/current-progress-board.md` 板头更新时间刷新到最近一次实际复核完成时间，至少不能晚于 18:31 这条 dashboard 纠偏记录。
+- 在主板摘要层补一条稳定真值：**dashboard 当前公网登录入口为 `7891`，本机 dashboard 服务为 `7892`，backend API 为 `18000`；登录成功后受保护接口按 Bearer token 鉴权，不再沿用“密码未知 / cookie 会话”旧口径。**
+- 后续凡是再出现“密码未知”“公网 7892 登录”“cookie 即当前主鉴权链”之类表述，直接视为过期口径，优先写入 review-correction-notes，再决定是否回写主板正文。
+
+### 影响口径
+- 需要改掉“主板 17:44 更新时间即可代表全文最新截面”的默认理解。
+- 需要把 dashboard 登录相关说法统一压成“公网 7891 / 本机 7892 / backend 18000 / Bearer token”，避免再混写入口、端口和鉴权方式。
+
+### Hermes玄成 处理结果
+- 已完成现场复核：`POST http://127.0.0.1:7892/api/auth/login` 用密码 `edict2026` 可返回 `ok=true` 与 token；随后以 `Authorization: Bearer <token>` 访问 `http://127.0.0.1:7892/api/live-status` 可成功读取状态。
+- 已确认用户口径：公网可登录入口为 `http://213.35.100.132:7891/`，不是把 `7892` 当公网入口。
+- 本轮先按要求把修复意见写入 `docs/review-correction-notes.md`，不再直接把复核动作误做成“立刻改主板正文”。
+
+### 已回写文件
 - `docs/review-correction-notes.md`
