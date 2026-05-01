@@ -1400,3 +1400,61 @@ GenericAgent 强在：
 - dashboard 归档只对 Done/Cancelled 有效，probe 卡在 Taizi
 - 当前 13 个任务：4 个业务 + 9 个 probe/smoke
 - 结论：probe 任务只能留着，不影响业务任务的治理链
+
+## 0.2 edict 派发链路断点调查（2026-05-01 16:30 北京时间）
+
+### 发现的问题
+- edict 任务 `JJC-20260501-001`（task_id: `2324820b-2d2b-4e98-91e3-9bc4bf864595`）创建后卡在"等待太子接旨分拣"，taizi 未执行。
+- 根因：`dashboard/server.py:3319-3328` 硬编码了 `main-session-guard`，对 `taizi` 和 `shangshu` 直接跳过 dispatch，返回 `suppressed-main-session-guard`。
+- 该 guard 在 commit `53bf28e`（2026-04-29）引入，原因是 `openclaw agent --agent taizi -m "..."` 往 main session 注入消息会与 gateway 正在处理的用户消息冲突，导致 `.jsonl.lock` 竞争、消息顺序混乱。
+- **结论：edict 当前无法向 taizi/shangshu 派发任务，三省六部链路从太子接旨开始就断了。**
+
+### 原始问题分析
+- 原冲突本质：edict 用 `openclaw agent` 往 **main session** 塞消息，与 gateway 用户消息处理冲突。
+- guard 的做法：直接禁止 dispatch，一劳永逸避免冲突。
+- 副作用：edict 变成只能创建不能执行的系统。
+
+### 可行方案：session-id 隔离
+- `openclaw agent` 支持 `--session-id <id>` 参数，可指定目标 session。
+- 方案：edict 派发时用独立的 `--session-id edict-dispatch`，不走 main session。
+- 这样 main session 不受影响（guard 原始目标达成），edict 任务也能正常派发。
+- 需要验证：`--session-id` 是否真的能避免 `.jsonl.lock` 冲突。
+
+### 当前状态
+- [x] 调查完成，根因已定位
+- [ ] 验证 `--session-id` 方案可行性
+- [ ] 修改 `dispatch_for_state` 实现 session-id 隔离
+- [ ] 端到端测试：创建任务 → taizi 接收 → 执行 → 回写
+
+### 影响口径
+- 当前 edict 三省六部流程对 taizi/shangshu 不可用
+- 任何依赖 taizi 执行的 edict 任务都会卡在"等待太子接旨"
+
+### 0.3 session 隔离方案验证（2026-05-01 16:30 北京时间）
+
+**验证结果：✅ 可行**
+
+- `openclaw agent --session-id` 不会创建新 session，只是查找已有 session，找不到就回 main session
+- `openclaw gateway call agent --params '{"sessionKey":"agent:taizi:edict-dispatch",...}'` 可以创建独立 session
+- 测试消息成功进入 `agent:taizi:edict-dispatch` session，与 main session 完全隔离
+- 新 session 文件：`/root/.openclaw/agents/taizi/sessions/353b313b-bb1b-443f-9034-a8e44a804f02.jsonl`
+
+**方案细节：**
+- edict dispatch 时使用 `sessionKey: agent:taizi:edict-dispatch`（或 `agent:{agent_id}:edict`）
+- 不走 main session，避免与用户消息冲突
+- main-session-guard 可以去掉，改用 session 隔离
+
+**2026-05-01 16:37~16:22（北京时间）端到端补证 / 现场回正：**
+- 这轮额外做了 4 条隔离链路实测：
+  - `16:10`：`这是 edict session 隔离测试。请回复：edict-session-ok` → 实际回复 `edict-session-ok`
+  - `16:16`：同样探针再次命中，实际回复 `edict-session-ok`
+  - `16:17`：`测试隔离session` → 实际回复“这条隔离 session 能正常接住”
+  - `16:22`：`测试gateway call session隔离` → 实际回复“gateway call 的 session 隔离也正常”
+- 这说明 **session 隔离链本身已经从“可创建独立 session”前推到“隔离 session 可稳定接收并正常回复文本”**。
+- 同时复核 `dashboard/server.py` 当前现场实现，`_do_dispatch()` 已不是待改状态：代码已切到 **`gateway call agent + sessionKey=agent:{agent_id}:edict-dispatch`**，说明“修改 `_do_dispatch()` 使用 sessionKey”这一项已落地，主板旧待办已过期。
+- 但这轮仍不能拔高成“生产主链已完全收口”：目前拿到的是 **隔离 session 能收、能回** 的证据；**edict 任务从创建 → 自动派发 → agent 实际执行 → 状态/结果回写** 的整条业务闭环，还需要继续补真实任务样本。
+
+**待做（回正后）：**
+- [x] `server.py` 的 `_do_dispatch()` 已改为 gateway call + sessionKey
+- [ ] 复核并清理 `main-session-guard` 的剩余口径、测试与文档，避免“代码已切隔离、文档还写旧 guard”继续打架
+- [ ] 继续补真实业务端到端样本：创建任务 → taizi 接收 → 执行 → 回写
