@@ -1,6 +1,6 @@
 # current progress board
 
-更新时间：2026-04-30 17:44（北京时间） / system `date`：2026-04-30 17:44:00 CST (+0800)
+更新时间：2026-05-01 13:20（北京时间） / system `date`：2026-05-01 13:20:00 CST (+0800)
 
 ## 0. 本轮系统改动速记
 - 2026-04-30 17:44（北京时间）：**OpenClaw 会话健康监控已自动化。** 已创建 cron job `9f1e85cb36d0`，每 2 小时自动运行 `monitor_openclaw_sessions.py`，检测 5 类异常（stale_running / aborted_last / empty_transcript / long_running / model_error）。仅在出现高/中危问题时告警投递到当前飞书直聊，低危不打扰。脚本源文件：`/root/.openclaw/workspace/edict/scripts/monitor_openclaw_sessions.py`，cron 副本：`~/.hermes/scripts/monitor_openclaw_sessions.py`。首次计划执行时间：2026-04-30 19:44 CST。
@@ -66,11 +66,11 @@
 
 **治理体系：**
 - 四份治理文档从骨架升级为实质（ARCHITECTURE 303行/RELIABILITY 258行/SECURITY 118行/FRONTEND 106行），已互相链接
-- active 执行稿 4 份，verification-ledger 15 条，feature-status 5 条
+- active 目录当前为 **4 份实质执行稿 + 1 份 README**；verification-ledger 15 条；feature-status 5 条
 - 主板 checklist 28 项标完成，剩余 5 项为长期观察/持续监控
 - session 监控 cron 每 2h 自动巡检
 - Evolver 等效分析脚本已落盘（scripts/evolver_analysis.py）
-- GenericAgent 等效外勤试验通过（browser 验证 + 截图留痕）
+- Hermes browser 等效外勤验证已完成并留有截图证据；但 GenericAgent 隔离区当前仍主要是目录骨架与 README，**不能拔高成长期机制已跑实**
 
 **OpenClaw / taizi：**
 - 飞书直聊：根因从"key 挂了"收紧为"windhub API key 间歇性失效"
@@ -81,6 +81,7 @@
 - windhub key 间歇性失效（需新 key 或切主模型）
 - probe 任务无法清理（backend 无 DELETE 接口）
 - 上游 edict 有新提交待定向同步（TOCTOU race fix 等）
+- dashboard 登录摘要口径必须固定按：**公网入口 `http://213.35.100.132:7891/` / 本机 dashboard `127.0.0.1:7892` / backend API `127.0.0.1:18000` / 受保护接口走 Bearer token**；不得再混回“密码未知 / 公网 7892 / 只靠 cookie”的旧说法
 
 ---
 
