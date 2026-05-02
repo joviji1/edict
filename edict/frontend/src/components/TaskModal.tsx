@@ -1,14 +1,11 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useStore, getPipeStatus, deptColor, stateLabel, STATE_LABEL } from '../store';
 import { api } from '../api';
+import { formatDashboardDateTime, formatDashboardTime } from '../time';
 import type {
   Task,
   TaskActivityData,
   SchedulerStateData,
-  TaskCommandPanelData,
-  TaskAutopsyData,
-  TaskCommandItem,
-  GateCheckItem,
   ActivityEntry,
   TodoItem,
   PhaseDuration,
@@ -47,45 +44,7 @@ function fmtStalled(sec: number): string {
 }
 
 function fmtActivityTime(ts: number | string | undefined): string {
-  if (!ts) return '';
-  if (typeof ts === 'number') {
-    const d = new Date(ts);
-    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
-  }
-  if (typeof ts === 'string' && ts.length >= 19) return ts.substring(11, 19);
-  return String(ts).substring(0, 8);
-}
-
-function fmtDateTime(ts?: string): string {
-  if (!ts) return '—';
-  return ts.replace('T', ' ').substring(0, 19);
-}
-
-function timeoutLabel(cls?: string): string {
-  const labels: Record<string, string> = {
-    healthy: '正常',
-    provider_timeout: '上游超时',
-    dispatch_timeout: '派发超时',
-    review_stalled: '审核停滞',
-    execution_stalled: '执行停滞',
-    network_timeout: '网络超时',
-    permission_denied: '权限受限',
-    tool_error: '工具失败',
-    loop_risk: '循环风险',
-    waiting_dependency: '等待依赖',
-    blocked: '已阻塞',
-    unknown: '未知',
-  };
-  return labels[cls || ''] || cls || '未知';
-}
-
-function gateResultLabel(result?: string): string {
-  const labels: Record<string, string> = {
-    pending: '待批',
-    approved: '已准奏',
-    rejected: '已封驳',
-  };
-  return labels[result || ''] || result || '—';
+  return formatDashboardTime(ts, { showSeconds: true });
 }
 
 export default function TaskModal() {
@@ -97,8 +56,6 @@ export default function TaskModal() {
 
   const [activityData, setActivityData] = useState<TaskActivityData | null>(null);
   const [schedData, setSchedData] = useState<SchedulerStateData | null>(null);
-  const [commandPanel, setCommandPanel] = useState<TaskCommandPanelData | null>(null);
-  const [autopsyData, setAutopsyData] = useState<TaskAutopsyData | null>(null);
   const laTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
 
@@ -117,18 +74,10 @@ export default function TaskModal() {
   const fetchSched = useCallback(async () => {
     if (!modalTaskId) return;
     try {
-      const [sched, panel, autopsy] = await Promise.all([
-        api.schedulerState(modalTaskId),
-        api.taskCommandPanel(modalTaskId),
-        api.taskAutopsy(modalTaskId),
-      ]);
-      setSchedData(sched);
-      setCommandPanel(panel);
-      setAutopsyData(autopsy);
+      const d = await api.schedulerState(modalTaskId);
+      setSchedData(d);
     } catch {
       setSchedData(null);
-      setCommandPanel(null);
-      setAutopsyData(null);
     }
   }, [modalTaskId]);
 
@@ -224,17 +173,6 @@ export default function TaskModal() {
   };
 
   const doSchedAction = async (action: string) => {
-    if (action === 'autopsy') {
-      try {
-        const d = await api.taskAutopsy(task.id);
-        setAutopsyData(d);
-        if (d.ok && d.exists) toast('🧾 已加载验尸报告', 'ok');
-        else toast(d.error || '当前暂无验尸报告', 'err');
-      } catch {
-        toast('服务器连接失败', 'err');
-      }
-      return;
-    }
     if (action === 'scan') {
       try {
         const r = await api.schedulerScan(180);
@@ -281,11 +219,6 @@ export default function TaskModal() {
   // Scheduler state
   const sched = schedData?.scheduler;
   const stalledSec = schedData?.stalledSec || 0;
-  const timeoutClass = commandPanel?.timeoutClass || schedData?.timeoutClass || 'unknown';
-  const commands = (commandPanel?.commands || []) as TaskCommandItem[];
-  const gateChecks = (schedData?.gateChecks || []) as GateCheckItem[];
-  const latestGate = gateChecks.length ? gateChecks[gateChecks.length - 1] : null;
-  const pendingConfirm = schedData?.pendingConfirm as Record<string, unknown> | undefined;
 
   return (
     <div className="modal-bg open" onClick={close}>
@@ -362,92 +295,19 @@ export default function TaskModal() {
               <div className="sched-kpi"><div className="k">升级级别</div><div className="v">{!sched?.escalationLevel ? '无' : sched.escalationLevel === 1 ? '门下省' : '尚书省'}</div></div>
               <div className="sched-kpi"><div className="k">派发状态</div><div className="v">{sched?.lastDispatchStatus || 'idle'}</div></div>
             </div>
-            <div className="sched-summary-row">
-              <div className={`sched-chip timeout-${timeoutClass === 'healthy' ? 'healthy' : timeoutClass === 'unknown' ? 'unknown' : 'warn'}`}>
-                超时分类：{timeoutLabel(timeoutClass)}
-              </div>
-              {sched?.stallReason && <div className="sched-chip">停滞原因：{sched.stallReason}</div>}
-              {sched?.lastEscalatedAt && <div className="sched-chip">最近升级：{fmtDateTime(sched.lastEscalatedAt)}</div>}
-            </div>
             {sched && (
               <div className="sched-line">
-                {sched.lastProgressAt && <span>最近进展 {(sched.lastProgressAt || '').replace('T', ' ').substring(0, 19)}</span>}
-                {sched.lastDispatchAt && <span>最近派发 {(sched.lastDispatchAt || '').replace('T', ' ').substring(0, 19)}</span>}
+                {sched.lastProgressAt && <span>最近进展 {formatDashboardDateTime(sched.lastProgressAt)}</span>}
+                {sched.lastDispatchAt && <span>最近派发 {formatDashboardDateTime(sched.lastDispatchAt)}</span>}
                 <span>自动回滚 {sched.autoRollback === false ? '关闭' : '开启'}</span>
                 {sched.lastDispatchAgent && <span>目标 {sched.lastDispatchAgent}</span>}
               </div>
             )}
             <div className="sched-actions">
-              {(commands.length ? commands : [
-                { action: 'retry', label: '🔁 重试派发', enabled: true },
-                { action: 'escalate', label: '📣 升级协调', enabled: true },
-                { action: 'rollback', label: '↩️ 回滚稳定点', enabled: true },
-                { action: 'scan', label: '🔍 立即扫描', enabled: true },
-              ]).map((cmd) => (
-                <button
-                  key={cmd.action}
-                  className={`sched-btn ${cmd.action === 'escalate' ? 'warn' : cmd.action === 'rollback' || cmd.action === 'autopsy' ? 'danger' : ''}`}
-                  disabled={!cmd.enabled}
-                  title={cmd.reason || cmd.label}
-                  onClick={() => doSchedAction(cmd.action)}
-                >
-                  {cmd.label}
-                </button>
-              ))}
-            </div>
-            {commands.length > 0 && (
-              <div className="sched-command-list">
-                {commands.map((cmd) => (
-                  <div key={`meta-${cmd.action}`} className={`sched-command-item ${cmd.enabled ? '' : 'disabled'}`}>
-                    <div className="sched-command-main">
-                      <span>{cmd.label}</span>
-                      <span className={`sched-command-state ${cmd.enabled ? 'ok' : 'off'}`}>{cmd.enabled ? '可执行' : '不可执行'}</span>
-                    </div>
-                    {cmd.reason && <div className="sched-command-reason">{cmd.reason}</div>}
-                  </div>
-                ))}
-              </div>
-            )}
-            {(pendingConfirm || latestGate) && (
-              <div className="sched-gate-box">
-                <div className="sched-subtitle">🛡️ 审批 / 门禁</div>
-                {pendingConfirm && (
-                  <div className="sched-gate-grid">
-                    <div><span>申请部门</span><b>{String(pendingConfirm.requested_by || task.org || '—')}</b></div>
-                    <div><span>审批人</span><b>{String(pendingConfirm.confirm_by || '—')}</b></div>
-                    <div><span>目标状态</span><b>{String(pendingConfirm.target_state || '—')}</b></div>
-                    <div><span>申请时间</span><b>{fmtDateTime(String(pendingConfirm.requested_at || ''))}</b></div>
-                  </div>
-                )}
-                {latestGate && (
-                  <div className="sched-gate-latest">
-                    <div className="sched-subtitle small">最近门禁记录</div>
-                    <div className="sched-gate-grid compact">
-                      <div><span>Gate</span><b>{latestGate.gate || '—'}</b></div>
-                      <div><span>结果</span><b>{gateResultLabel(latestGate.result)}</b></div>
-                      <div><span>流转</span><b>{latestGate.from || '—'} → {latestGate.to || '—'}</b></div>
-                      <div><span>时间</span><b>{fmtDateTime(latestGate.at)}</b></div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-            <div className="sched-autopsy-box">
-              <div className="sched-subtitle">🧾 验尸 / 复盘</div>
-              {autopsyData?.exists ? (
-                <>
-                  <div className="sched-gate-grid compact">
-                    <div><span>原因</span><b>{autopsyData.autopsy?.reason || '—'}</b></div>
-                    <div><span>标签</span><b>{autopsyData.autopsy?.label || '—'}</b></div>
-                    <div><span>生成时间</span><b>{fmtDateTime(autopsyData.autopsy?.generatedAt)}</b></div>
-                    <div><span>来源</span><b>{autopsyData.autopsy?.source || '—'}</b></div>
-                  </div>
-                  {autopsyData.autopsy?.path && <div className="sched-path">{autopsyData.autopsy.path}</div>}
-                  {autopsyData.content && <pre className="sched-autopsy-pre">{autopsyData.content.slice(0, 2000)}</pre>}
-                </>
-              ) : (
-                <div className="sched-empty">当前暂无验尸报告</div>
-              )}
+              <button className="sched-btn" onClick={() => doSchedAction('retry')}>🔁 重试派发</button>
+              <button className="sched-btn warn" onClick={() => doSchedAction('escalate')}>📣 升级协调</button>
+              <button className="sched-btn danger" onClick={() => doSchedAction('rollback')}>↩️ 回滚稳定点</button>
+              <button className="sched-btn" onClick={() => doSchedAction('scan')}>🔍 立即扫描</button>
             </div>
           </div>
 
@@ -500,7 +360,7 @@ export default function TaskModal() {
                   const col = deptColor(fl.from || '');
                   return (
                     <div className="fl-item" key={i}>
-                      <div className="fl-time">{fl.at ? fl.at.substring(11, 16) : ''}</div>
+                      <div className="fl-time">{formatDashboardTime(fl.at, { showSeconds: false })}</div>
                       <div className="fl-dot" style={{ background: col }} />
                       <div className="fl-content">
                         <div className="fl-who">
@@ -593,7 +453,7 @@ function LiveActivitySection({
   const agentParts: string[] = [];
   if (data.agentLabel) agentParts.push(data.agentLabel);
   if (data.relatedAgents && data.relatedAgents.length > 1) agentParts.push(`${data.relatedAgents.length}个 Agent`);
-  if (data.lastActive) agentParts.push(`最后活跃: ${data.lastActive}`);
+  if (data.lastActive) agentParts.push(`最后活跃: ${formatDashboardDateTime(data.lastActive)}`);
 
   // Phase durations
   const phaseDurations = data.phaseDurations || [];
