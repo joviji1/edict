@@ -940,3 +940,145 @@ Redis Streams 现场：
 一句话收口：
 
 > **现在已经不是“有没有问题”的阶段，而是已经明确到：systemd 级 backend export 常驻开启，配合 dashboard 定时重复派发，正在持续制造主视图与 runtime 的错位。**
+
+
+---
+
+## 2026-05-05 根因线继续下钻：已把“配置来源”与“固定节奏重复派发”两条线接上
+
+这一轮继续按用户要求沿两条根因线往下抠：
+1. **是谁把 `edict-loop.service` 固化成 `EDICT_ENABLE_BACKEND_EXPORT=true` 常驻态；**
+2. **dashboard 为什么会按固定节奏反复把同一任务自动派发到 `zhongshu`。**
+
+现在已经能把这两条线接起来，而不是各说各话。
+
+### 1. `edict-loop.service` 的 `EDICT_ENABLE_BACKEND_EXPORT=true` 不是偶发漂移，而是 4 月底 cutover / 回切文档里明确保留下来的现网过渡态
+这轮不再只看当前 systemd unit，而是顺着仓内文档、计划、回滚演练记录往回追，现场证据已经非常一致：
+
+- `/etc/systemd/system/edict-loop.service` 文件时间：`2026-04-30 05:45:14 +0800`
+- 同一时间窗口的文档/计划多处都明确写了：
+  - `docs/plans/2026-04-28-backend-cutover-minimal-rollout.md`
+  - `docs/plans/2026-04-30-systemd-rollback-drill-runbook.md`
+  - `docs/closeout.md`
+  - `docs/RELIABILITY.md`
+  - `docs/current-progress-board.md`
+
+这些材料的共同口径不是“误加了这行配置”，而是：
+
+> **为了让 backend → legacy JSON 兼容导出链进入生产 dual/export 过渡态，故意把 `edict-loop.service` 设成 `Environment=EDICT_ENABLE_BACKEND_EXPORT=true`，并在 2026-04-30 的 systemd 回滚演练后又按既定顺序回切恢复。**
+
+也就是说，这条配置的来源已经可以收紧成：
+
+> **当前常驻态不是“某次误操作遗留”，而是 4 月底 backend host-native cutover / rollback drill 结束后，被明确回切恢复的过渡态配置。**
+
+这点和主板 2026-05-03 那条“总闸已切断、现网纯净 loop 已用 `env -i` 重拉”的说法，已经发生直接冲突。因为今天现场看到的是：
+- `edict-loop.service` 仍然 active
+- unit 文件仍然带 `EDICT_ENABLE_BACKEND_EXPORT=true`
+- `tasks_source.json` 仍被 backend_export 全量覆盖
+
+因此更准确的表述只能是：
+
+> **至少到 2026-05-05 这次现网复查为止，5 月 3 日所声称的“legacy backend export 总闸已切断”并没有稳定保留在 systemd 常驻态里；当前生效的仍是 4 月底 dual/export 过渡态的 loop service 配置。**
+
+### 2. dashboard 固定节奏重复派发的根因，不再是抽象“巡检太激进”，而是 backend export 把 `_scheduler` 状态洗空了
+这一轮把 `handle_scheduler_scan()`、`_ensure_scheduler()`、backend 导出脚本和现场数据对位后，重复派发的成因已经非常具体。
+
+#### 2.1 `handle_scheduler_scan()` 的触发规则本身并不神秘
+`dashboard/server.py` 当前逻辑：
+- `_ensure_scheduler(task)` 会给每个任务补默认调度状态：
+  - `stallThresholdSec = 600`
+  - `maxRetry = 2`
+  - `retryCount = 0`
+  - `lastProgressAt = task.updatedAt`（若原任务没带）
+  - `snapshot = {state, org, ...}`（若原任务没带）
+- `handle_scheduler_scan()` 遍历任务时，会用：
+  - `last_progress = sched.lastProgressAt or task.updatedAt`
+  - `stalled_sec = now - last_progress`
+- 若超过阈值，且：
+  - `retryCount < maxRetry` → 先做 `taizi-scan-retry`
+  - 然后调用 `dispatch_for_state(task_id, task, state, trigger='taizi-scan-retry')`
+
+所以它不是无缘无故每两分钟发疯，而是**每轮都认为这条任务是“老任务停滞，需要重试”**。
+
+#### 2.2 为什么它会一直这么认为？因为 export 出来的任务把 `_scheduler` 洗成了空字典
+现在现场最关键的新证据有三条：
+
+1. `export_backend_tasks_to_legacy_json.py` 会把 backend `/api/tasks` 的 `scheduler/_scheduler` 原样带出来；
+2. 但当前 backend 里的这条任务 `bbbf369f-959b-484e-890d-9c28d56b748a` 现场返回就是：
+   - `scheduler = {}`
+   - `_scheduler = {}`
+3. 导出后的 `data/tasks_source.json` 现场也是：
+   - **18/18 条任务 `_scheduler = {}`**
+
+这意味着：
+
+> **只要 loop 继续做 backend export，写回 `tasks_source.json` 的就不是带有巡检历史、重试计数、快照与 lastProgressAt 的任务，而是一批 `_scheduler` 全空的“新鲜旧任务”。**
+
+而 `handle_scheduler_scan()` 每轮一看这些任务：
+- `_scheduler` 是空的
+- `updatedAt` 又是很早以前的时间
+- 于是 `_ensure_scheduler()` 只能重新补一套默认值
+- 接着就把它们再次认定为“停滞超阈值、需要重试派发”
+
+所以重复派发的更底层机制已经可以明确写成：
+
+> **不是 scheduler 自己记不住，而是 scheduler 记住的东西根本没有稳定存活到下一轮——因为主任务源被 backend export 周期性重写，而 backend 当前又没有把对应的 `_scheduler` 调度状态持久化回来。**
+
+#### 2.3 这也解释了“为什么固定节奏差不多每两分钟一次”
+当前 `edict-loop.service` 每 15 秒刷一次 `tasks_source.json`；
+而 dashboard 的调度扫描会反复基于“已被重写后的旧任务”重新判断停滞。
+
+虽然是否正好两分钟还和扫描入口/循环节拍有关，但根本点已经够明确：
+
+> **固定节奏重复派发，不是因为任务真的在两分钟内又新卡死了一次，而是因为这条任务的调度记忆每轮都在被 backend export 清洗回“空白停滞态”。**
+
+### 3. 同一任务的 backend/source/runtime 三面已经能完整解释错位
+本轮把同一任务 `bbbf369f-959b-484e-890d-9c28d56b748a` 三面对位后，证据链非常完整：
+
+- backend `/api/tasks`
+  - `state = Zhongshu`
+  - `flow_log` 只有 `Taizi -> Zhongshu`
+  - `progress_log = []`
+  - `_scheduler = {}`
+- `data/tasks_source.json`
+  - 和 backend 几乎一致
+  - `state = Zhongshu`
+  - `sourceLayer = backend_export`
+  - `_scheduler = {}`
+- `data/tasks_runtime_view.json`
+  - 已经看到会话推进到：
+    - `state = Menxia`
+    - `org = 门下省`
+    - `now = 思考中: 已接旨`
+
+所以当前错位不是一个点错，而是三层一起构成的：
+
+1. **runtime 看到了更前的会话推进态；**
+2. **backend 主任务实体没同步到这一步；**
+3. **loop 又把 backend 的旧态重新导回 `tasks_source.json`；**
+4. **scheduler 元数据还在 export 过程中被洗空；**
+5. **于是 dashboard 巡检继续把同一任务当成“停滞的 Zhongshu 任务”反复重试派发。**
+
+### 4. 这轮之后，两条根因线已经不是并列问题，而是串联问题
+现在可以把“配置来源”和“触发机制”合并成一句更准确的话：
+
+> **4 月底为了 dual/export 过渡态而保留下来的 `edict-loop.service + EDICT_ENABLE_BACKEND_EXPORT=true` 常驻配置，正在持续把 backend 的旧任务态（且 `_scheduler` 为空）重新覆盖回 `tasks_source.json`；dashboard 的 scheduler scan 随后把这些被洗空调度记忆、但 `updatedAt` 很老的任务再次认定为停滞，于是以固定节奏反复自动派发到 `zhongshu`。**
+
+这就不是两个孤立 bug，而是**同一条主链上的上下游耦合故障**。
+
+### 5. 当前最接近根因的结论
+截至这一轮，最接近根因的表述应更新为：
+
+> **edict 当前反复派发到 `zhongshu` 的根因，不是单纯 dashboard 调度阈值设置有问题，而是 systemd 常驻的 backend export 过渡态仍在生效，且 backend 导出的任务没有保留 `_scheduler` 调度记忆，导致巡检每轮都把同一条老任务重新识别成“停滞待重试”。**
+
+### 6. 如果后续要继续查，下一步已非常具体
+从“根因确认”继续往下做，优先级应是：
+
+1. **确认 backend 主链为何没有把 runtime 推进态（至少 `Menxia`）和调度元数据稳定沉淀回任务实体；**
+2. **确认 export 脚本是否应补保真逻辑，还是根本不该继续处于常驻开启态；**
+3. **确认 dashboard scheduler scan 是否应对 `_scheduler={}` 且 `sourceLayer=backend_export` 的任务加防抖/抑制条件；**
+4. **最终再决定是收掉 loop export，总线切纯聚合视图，还是先修 backend 状态/调度持久化。**
+
+一句话收口：
+
+> **现在已经能把问题讲完整：不是“edict 有点不稳”，而是“4 月底保留下来的 dual/export 过渡态常驻配置 + backend 导出任务缺失 `_scheduler` 记忆 + dashboard 巡检按旧时间戳判停滞”三者叠加，稳定制造了同一任务的重复派发与主视图落后。**
