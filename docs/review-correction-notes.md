@@ -625,3 +625,131 @@ Redis Streams 现场：
 - `edict/backend/app/main.py`
 - `tests/test_dispatch_output_persistence.py`
 - `tests/test_backend_review_action.py`
+
+
+---
+
+## 2026-05-05 继续复查补记：已把“为什么派发后没稳定收敛”进一步收紧到聚合与样本链
+
+在上一轮已经确认“任务还能真实派发进 edict”之后，我继续往下抠 `rebuild_task_views.py`、`sync_governance_samples.py`、`refresh_live_data.py` 三段现场代码，并再次对位同一任务 `bbbf369f-959b-484e-890d-9c28d56b748a` 的四层数据。新的收紧结论如下。
+
+### 1. `tasks_source.json` 当前吃不到 runtime 新状态，不是偶发现象，是聚合优先级设计使然
+本轮直接读 `scripts/rebuild_task_views.py`，当前聚合顺序是：
+1. `runtime_tasks` → 标记 `sourceLayer=runtime`
+2. `governance_samples` → 标记 `sourceLayer=governance_sample`
+3. `archive` → 标记 `sourceLayer=jjc_archive`
+
+随后统一进 `dedupe()`。
+
+`dedupe()` 当前的关键规则是：
+- 一旦同 `task_key` 已存在，就按 `sort_key()` 推导的时间先后决定 `newer_or_equal`
+- 对 `state/org/updatedAt/now/_scheduler/progress_log/flow_log/block/output` 这些 **stateful_fields**，只有当“新对象时间更新鲜或相等”时，才允许覆盖旧值
+- 否则旧值保留
+
+这意味着：
+
+> **如果 `tasks_source` 里当前在用的 backend_export 任务带着较新的 `updatedAt`，而 runtime 任务只是会话桥接出来的较晚观察快照，但没有把更高优先级时间戳稳定抬上来，那么 runtime 的 `Menxia`/`门下省` 就不会稳定覆盖掉 source 里的 `Zhongshu`/`中书省`。**
+
+今天这个任务现场就是这样：
+- `tasks_source.json`
+  - `state = Zhongshu`
+  - `org = 中书省`
+  - `updatedAt = 2026-05-01T09:14:30.061384+00:00`
+  - `sourceLayer = backend_export`
+- `tasks_runtime_view.json`
+  - `state = Menxia`
+  - `org = 门下省`
+  - `sourceMeta.updatedAt = 1777953342866`
+  - `sessionKey = agent:zhongshu:edict-dispatch`
+
+也就是说：
+- runtime 已经看到更晚的治理推进态；
+- 但主聚合视图仍然保留 backend_export 旧主状态。
+
+所以这一层不能再叫“偶尔不同步”，而应明确叫：
+
+> **聚合后的主视图当前没有把 runtime 推进态稳定抬成主真相。**
+
+### 2. `tasks_governance_samples.json` 对该任务缺席，不是巧合，而是样本准入条件导致的空洞
+继续看 `scripts/sync_governance_samples.py`：
+- 它会加载四类 source：
+  - `runtime_view`
+  - `legacy_tasks_source`
+  - `mission_control`
+  - `manual_parallel`
+- 但样本是否保留，还要看：
+  - `has_governance_markers(task)`
+  - `prune_samples(...)`
+  - 以及 probe / 老化过滤
+
+当前 `has_governance_markers(task)` 只认这些字段：
+- `pending_confirm`
+- `gate_checks`
+- `review_round`
+- `templateId`
+- `templateParams`
+- `targetDept`
+- `autopsy`
+- `notifications`
+
+而今天这条任务 `bbbf369f-...` 的 runtime/source 现场状态虽然已经推进，但并不天然带这些 governance markers，所以最后结果就是：
+
+> **它明明是正在真实推进的任务，却因为不带上述治理字段，被 governance sample 层完全漏收。**
+
+这解释了为什么会出现下面这种割裂：
+- runtime 有这条任务；
+- source 有这条任务；
+- live_status 有这条任务；
+- governance_samples 却查无此项。
+
+因此当前更准确的新口径应补成：
+
+> **`tasks_governance_samples.json` 现在不是“所有关键推进任务的稳定治理沉淀层”，它更像“带治理标记字段任务的样本层”；对纯推进态任务，现行准入规则会漏收。**
+
+### 3. `live_status.json` 为什么继续显示 `backend_api_export`，现场原因已经非常直接
+继续看 `scripts/refresh_live_data.py`，当前逻辑是：
+- 先读 `tasks_source.json`
+- 再判断 `tasks` 列表里是否存在 `sourceLayer == 'backend_export'`
+- 只要有，就沿用 `tasks_backend_export_meta.json` 里的：
+  - `taskSource`
+  - `taskSourceMeta`
+
+而今天现场 `tasks_source.json` 中明确还存在多条 `sourceLayer=backend_export` 任务，包含 `bbbf369f-...` 本身。
+
+所以：
+
+> **`live_status.taskSource = backend_api_export` 不是 refresh 脚本误判，而是它忠实反映了“当前聚合主视图里仍在使用 backend_export 任务作为事实源之一”。**
+
+这也意味着，如果不先把 `tasks_source.json` 中这批 backend_export 主视图残留真正收干净，单改 `refresh_live_data.py` 文案没有意义；它只会继续诚实地把现场真相暴露出来。
+
+### 4. 因此这轮继续复查后的新结论，应从“多层状态脱节”再往下收紧一层
+上一轮我已经把问题从“完全不可用”纠偏成“多层状态脱节”。
+
+这轮继续抠完代码和数据后，可以再收紧成：
+
+> **当前 edict 的主要稳定性问题，不只是多层状态脱节，而是：**
+> 1. **主聚合视图没有把 runtime 推进态稳定提升为主状态；**
+> 2. **governance sample 现行准入条件会漏掉纯推进态任务；**
+> 3. **live_status 对 backend_api_export 的显示并非幻觉，而是主视图里确实还混着 backend_export 层任务。**
+
+换句话说：
+
+> **现在不是“派不出去”，也不是“runtime 没推进”，而是“推进了以后，主视图、样本层和最终展示层采用了不同的收真相规则”，所以越往上看越像没推进，越往 runtime 里看越能看到真实推进。**
+
+### 5. 下一步优先修法建议也应更新
+如果接下来继续修，不应再泛泛说“修同步”。优先级应更具体：
+
+1. **先修 `rebuild_task_views.py` 的主状态覆盖策略**
+   - 让 runtime 已识别出的 `state/org/now/updatedAt` 在满足条件时，能稳定压过 backend_export 旧主状态；
+   - 否则主视图永远落后半拍。
+
+2. **再修 `sync_governance_samples.py` 的样本准入条件**
+   - 对已桥接出明确 `taskId + state/org` 的 runtime 推进态，不能只因为缺 `pending_confirm/gate_checks/...` 就完全不入样本；
+   - 否则 governance sample 无法承担“治理推进历史沉淀层”的角色。
+
+3. **最后才决定要不要继续压缩 backend_export 残留面**
+   - 因为 `live_status` 当前显示 backend_api_export 并不是根因，而是上游主视图残留的结果。
+
+一句话更新这轮继续复查后的最终口径：
+
+> **edict 当前的核心问题已经收紧为“推进态真相提升失败”：runtime 看得到，主视图抬不上去，样本层还会漏收，最终导致 live_status 继续暴露旧的 backend_export 主状态。**
