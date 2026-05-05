@@ -1240,3 +1240,129 @@ Redis Streams 现场：
 一句话收口这轮新增发现：
 
 > **现在已经能确认：重复派发的上游不是单纯 legacy/export 错位，而是 backend 主任务实体自己就没有收敛到 runtime 已推进的状态；export 只是把这个旧态忠实同步给了 dashboard。**
+
+
+---
+
+## 2026-05-05 继续下钻：runtime → backend 主任务状态回写链缺的不是“小字段”，而是整条事件消费链
+
+这一轮继续顺着 `runtime -> backend 主任务实体` 往下抠，已经拿到目前最关键的一层根因：
+
+> **backend 当前并没有一条“消费 agent 输出 / 会话推进结果 → 驱动主任务 `transition_state()` / `update_scheduler()`”的链路。**
+
+也就是说：
+- dispatch worker 能把任务发给 agent；
+- agent/runtime 会话也确实能继续推进；
+- 但 backend 主任务实体不会因为 agent 已接旨、已推进、已审议而自动变成 `Menxia/Assigned/...`。
+
+### 1. orchestrator 当前监听的 topics 里，根本没有 `agent.thoughts`
+本轮直接读 `edict/backend/app/workers/orchestrator_worker.py`：
+
+`WATCHED_TOPICS` 当前只有：
+- `TOPIC_TASK_CREATED`
+- `TOPIC_TASK_STATUS`
+- `TOPIC_TASK_COMPLETED`
+- `TOPIC_TASK_STALLED`
+
+而 `dispatch_worker.py` 在 agent 返回后真正发布的是：
+- `TOPIC_AGENT_THOUGHTS`
+- `event_type = "agent.output"`
+
+也就是说：
+
+> **dispatch worker 发布了 agent 输出事件，但 orchestrator 根本没订阅 / 没消费 `agent.thoughts`。**
+
+这不是“消费了但解析失败”，而是更直接：**它不在 watched topics 里。**
+
+### 2. dispatch worker 当前只会做两件事：写 progress/output，不会写主状态
+`edict/backend/app/workers/dispatch_worker.py` 当前在 agent 成功返回后，做的是：
+- 发布 `agent.output`
+- 调 `svc.add_progress(task_id, agent, sanitized_stdout or raw_stdout)`
+- 若返回码为 0 且有输出，则写：
+  - `task.output = raw_stdout`
+
+但它不会：
+- `transition_state(task_id, TaskState.Menxia, ...)`
+- `transition_state(task_id, TaskState.Assigned, ...)`
+- `update_scheduler(task_id, {...})`
+
+所以当前 dispatch worker 的语义更像：
+
+> **“我把消息发给 agent，并把 agent 回话内容记个痕迹。”**
+
+而不是：
+
+> **“我根据 agent 推进结果，把主任务状态推进到下一节点。”**
+
+因此如果没有另一条事件消费链接手解析 agent 输出并推动状态机，主任务实体当然会卡在原状态。
+
+### 3. backend 当前真正会改主状态的入口，仍然只有显式状态流转 API / service 调用
+本轮继续对 `task_service.py` 做对位，当前真正会改 `task.state` 的主要入口只有：
+- `transition_state()`
+- `review_action()`（内部也会调 `transition_state()`）
+- `orchestrator_worker._on_task_stalled()`（做升级/阻塞时直接改 state）
+
+但现在没有看到任何一条后台链路会在收到：
+- `agent.output`
+- `agent.dispatch.start`
+- runtime 会话推进态
+之后，自动调用：
+- `transition_state(..., Menxia/Assigned/Doing/...)`
+
+因此当前 backend 的主状态推进机制，仍更像：
+
+> **需要明确的结构化状态事件，不能靠 agent 自由文本输出自然推进。**
+
+可现场恰恰是：
+- runtime 会话推进到了 `Menxia`
+- 但 backend 没有消费这类“会话推进事实”的结构化入口
+
+这就解释了为什么 backend 主实体长期停在 `Zhongshu`。
+
+### 4. 这也解释了“为什么 runtime_view 能前进，但 backend 主实体完全不动”
+前面已经确认：
+- `tasks_runtime_view.json` 里这条任务已到 `Menxia`
+- backend `/api/tasks` / `/api/tasks/live-status` 里同一任务还在 `Zhongshu`
+
+现在根因已经够具体：
+
+> **runtime_view 的推进，来自 OpenClaw 会话观察 / session bridge；**
+> **backend 主任务状态推进，依赖 backend 自己的结构化状态机事件；**
+> **而当前系统里这两条链没有打通。**
+
+所以不是 runtime 假推进，也不是 backend 查询错了，而是：
+
+> **它们各自说的是两套没有自动汇流的真相。**
+
+### 5. dashboard 固定节奏重复派发因此变成必然结果，而不是巧合
+把前面所有证据串起来，现在重复派发链已经可以完整描述为：
+
+1. `edict-loop.service` 常驻开启 backend export；
+2. backend 主任务实体仍停在 `Zhongshu + scheduler={}`；
+3. runtime 会话虽然推进到了 `Menxia`，但 backend 没有消费 `agent.output` 去推进主状态；
+4. export 于是持续把 backend 旧态写回 `tasks_source.json`；
+5. dashboard 的定时巡检每轮看到的都是：
+   - 老 `updatedAt`
+   - 空 `_scheduler`
+   - `state=Zhongshu`
+6. 所以每轮都认定这还是一条“停滞待重试的 Zhongshu 任务”；
+7. 于是稳定地每两分钟左右再次自动派发到 `zhongshu`。
+
+这条链到这里已经很完整了。
+
+### 6. 当前最接近根因中心的一句话
+截至这一轮，最接近根因中心的表述应更新为：
+
+> **系统真正缺的不是某个 if 或时间戳，而是“agent/runtime 推进结果 → backend 主任务状态机”的自动汇流链。dispatch worker 只会记输出，orchestrator 也不消费 `agent.output`，因此 backend 主任务实体不会因会话推进而前进；backend export 再把这个旧态持续放大给 dashboard，最终稳定制造重复派发。**
+
+### 7. 后续继续查，优先级已再次收紧
+如果继续往下做，优先级应是：
+
+1. **确认当前 runtime_view 是由哪条 session bridge / sync 脚本观察出来的，为什么它不反向写回 backend；**
+2. **确认设计上是否本就打算由 agent 输出触发结构化状态回写，还是缺了专门的 parser/consumer；**
+3. **确认 backend 是不是需要新增对 `TOPIC_AGENT_THOUGHTS/agent.output` 的消费器，或把状态推进改成显式 API 回写；**
+4. **在这条主链未补齐前，dashboard 应至少对 `backend_export + state=Zhongshu + _scheduler={}` 任务加重复派发抑制。**
+
+一句话收口：
+
+> **现在已经基本坐实：runtime 会推进、backend 不会跟；不是因为 backend 不支持状态流转，而是因为当前根本没有一条把 runtime 推进事实自动喂进 backend 状态机的消费链。**
