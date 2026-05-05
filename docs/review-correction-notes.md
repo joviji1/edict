@@ -1669,3 +1669,102 @@ closeout 里已明确记录：
 一句话收口：
 
 > **现在已经能确定：双真相不是偶发现象而是阶段性设计产物；而重复派发没被现有 guard 拦住，也不是 guard 不存在，而是 guard 挂在 Menxia 主状态层，当前 scheduler 实际消费的却仍是 Zhongshu 旧主视图。**
+
+
+---
+
+## 2026-05-05 再继续下钻：聚合规则本身并不是“旧态必然压新态”，但这条任务根本没进入 governance sample
+
+这一轮专门盯 `rebuild_task_views.py` 和 `sync_governance_samples.py` 的优先级逻辑后，能够把一个重要误判再排掉一层：
+
+> **当前问题不应再简单表述为“聚合策略死保旧主状态”。**
+
+更准确的说法是：
+
+1. 聚合规则本身确实有“谁更新鲜谁优先”的设计；
+2. 但 **这条任务根本没有进入 `tasks_governance_samples.json`**；
+3. runtime_view 只是侧车；
+4. 因此主聚合视图最终只剩 backend_export 的旧主状态可用，runtime 的 Menxia 没有合流入口。
+
+### 1. `rebuild_task_views.py` 的优先级规则本身并不死板
+本轮再次核对脚本，`dedupe()` 的合并规则是：
+- 先按 `task_key` 去重；
+- 比较 `sort_key()`（优先取：
+  - `sampleLastSeenAt`
+  - `updatedAt`
+  - `sampleCapturedAt`
+  - `pending_confirm.requested_at`
+  - `sourceMeta.updatedAt`
+）
+- 对 `stateful_fields`（包括 `state/org/updatedAt/now/_scheduler/progress_log/flow_log/block/output`），只有在 **新对象更鲜或相等** 时才覆盖旧值；
+- 对字典字段则做 merge。
+
+这说明 rebuild 并不是“永远锁死旧的 backend_export”。如果更晚的治理样本或者 runtime 样本真的进来，并且时间戳更鲜，理论上是可以覆盖掉旧态的。
+
+### 2. 真正的问题：这条任务没进 governance sample，所以聚合时没有第二来源可用
+现场 `data/tasks_governance_samples.json` 里搜索这条任务 `bbbf369f-959b-484e-890d-9c28d56b748a`：
+- **不存在**
+
+这就意味着：
+
+> **当前聚合只有 backend_export 这一条主来源可吃，runtime 侧并没有通过 governance sample 形成第二来源。**
+
+于是最终结果就是：
+- runtime_view 里“看见” Menxia；
+- governance sample 没有这条任务；
+- backend 主实体还在 Zhongshu；
+- rebuild 只能把 backend_export 的旧主状态继续当作主视图来源。
+
+### 3. `sync_governance_samples.py` 的设计，也解释了为什么这条任务没自然入样本
+`sync_governance_samples.py` 当前的关键条件是：
+- 它会从：
+  - `runtime_view`
+  - `legacy_tasks_source`
+  - `mission_control`
+  - `manual_parallel`
+  这些 source 里抽取样本；
+- 但样本的保留又依赖一组 governance markers /准入条件；
+- 没有这些 marker 的纯推进态任务，可能不会被保留为 governance sample。
+
+结合现场现状：
+- 这条任务虽然在 runtime_view 里到了 `Menxia`；
+- 但它并没有进入 sample 层；
+- 于是样本层既无法作为 Menxia 证据，也无法反向影响 rebuild。
+
+所以现在问题的精确表述应再补一句：
+
+> **不是 runtime_view 没看见推进，而是 governance sample 层没有把这条推进态任务沉淀下来；没有 sample，就没有第二来源，rebuild 只能继续依赖 backend_export 旧态。**
+
+### 4. 这也解释了为什么现在 runtime_view 看起来“知道得更多”，但系统主链依旧没变
+这条链目前实际上是：
+
+1. `sync_from_openclaw_runtime.py` 语义推断出 Menxia，写到 runtime_view；
+2. 但 `sync_governance_samples.py` 没把这条任务保留为 governance sample；
+3. `rebuild_task_views.py` 因为缺少第二来源，只能继续吃 backend_export 的主任务旧态；
+4. `refresh_live_data.py` 再忠实暴露 `taskSource=backend_api_export`；
+5. dashboard scan 继续根据旧主视图重复派发。
+
+所以 runtime_view 的提升没有形成闭环，不是因为它的内容不对，而是：
+
+> **它没有被样本层接住，也就没能成为主聚合链的输入。**
+
+### 5. 当前最准确的结论应再修正一层
+此前我们已经收紧到：
+- 双真相是阶段性架构产物；
+- guard 没命中；
+- runtime_view 是侧车。
+
+这一轮再往下收紧，最准确的说法应变成：
+
+> **这条任务之所以仍被重复派发，不是因为聚合规则不会选新，而是因为 runtime_view 的 Menxia 没有进入 governance sample，导致 rebuild 没有第二来源可用；主聚合最终只能继续以 backend_export 旧态为主，所以 dashboard 依然把它当作 Zhongshu 停滞任务。**
+
+### 6. 后续如果要继续查，已非常具体
+下一步不该再问“聚合规则是不是坏了”，而要问：
+
+1. **为什么这条真实推进态没有被 `sync_governance_samples.py` 收进样本层；**
+2. **是样本准入 marker 太严，还是 session 文本没形成样本；**
+3. **如果要让 Menxia 真正影响主链，是补样本准入，还是补正式回写桥，还是两者都要。**
+
+一句话收口：
+
+> **现在可以明确：聚合规则本身并非无脑保旧；真正断在更前一层——这条任务没有进入 governance sample，所以 runtime_view 的 Menxia 没有第二来源承接，主视图自然仍由 backend_export 旧态主导。**
