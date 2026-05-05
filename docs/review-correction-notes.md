@@ -1519,3 +1519,153 @@ runtime_view 只是：
 一句话收口：
 
 > **现在已经基本看清：runtime_view 的 `Menxia` 是“看出来的”，backend 的 `Zhongshu` 是“写进去的”；前者不会自动改后者，所以重复派发不是偶然，而是这套双真相架构在未加桥接与抑制时的自然结果。**
+
+
+---
+
+## 2026-05-05 继续下钻：双真相基本属于阶段性架构设计结果，现成 guard 也没命中这条任务
+
+这一轮继续按“两条分岔”往下查：
+1. **runtime_view 只做侧车观察，是不是设计使然；**
+2. **现网有没有现成抑制点本该拦住重复派发，却没有命中。**
+
+现在结论已经可以再收紧一层。
+
+### 1. `tasks_runtime_view.json` 作为只读/侧车层，基本可以判定是阶段性设计结果，不是临时失手
+本轮继续核对文档与收口稿，几处现场证据高度一致：
+
+#### 1.1 `docs/ARCHITECTURE.md` 已把三层数据分离写成正式分层
+文档明确列出：
+- `tasks_runtime_view.json` → runtime 层 / 当前运行态视图
+- `tasks_governance_samples.json` → governance 层 / 治理验收样本
+- `tasks_jjc_archive.json` → archive 层 / 历史归档
+
+并在主线链路里写明：
+- `sync_from_openclaw_runtime.py` 拉取运行态证据
+- `rebuild_task_views.py` 重建聚合视图
+
+这说明 runtime_view 从一开始就被定位成：
+
+> **一层“运行态视图 / 观察视图”，而不是 backend 主状态表。**
+
+#### 1.2 `docs/closeout.md` 也明确写过 Phase 1 改造目标
+closeout 里已明确记录：
+- `sync_from_openclaw_runtime.py` 改为单独输出 `data/tasks_runtime_view.json`
+- `sync_governance_samples.py` 单独维护治理样本
+- `rebuild_task_views.py` 再聚合回前端兼容出口 `tasks_source.json`
+
+这个口径本质上就是：
+
+> **先把 runtime / governance / archive 三层拆开，再聚合；不是让 runtime 直接回写 backend 主表。**
+
+#### 1.3 backend cutover 方案也写过：JSON 只剩兼容导出 / 只读过渡用途
+`docs/plans/2026-04-26-backend-mainline-cutover.md` 已写明阶段目标：
+- backend 成为主写链
+- JSON 仅剩兼容导出 / 只读过渡用途（若仍保留）
+
+所以当前 runtime_view 不反写 backend，并不是“代码忘了补一个 POST”；更接近事实的说法是：
+
+> **现阶段架构本来就把 runtime_view 设计成侧车观察层，把 backend 主任务实体设计成结构化主写层。**
+
+也就是说，今天看到的“双真相”，至少在职责边界上并非完全意外，而是：
+
+> **阶段性架构故意分层，但后续没有把“侧车观察结果何时/如何提升为主状态”这一步补齐。**
+
+### 2. 现成 guard 确实存在，但它防的是“门下已有明确准奏/封驳后的重复送审”，并不防当前这条 `Zhongshu` 旧态重派
+本轮继续抠 `dashboard/server.py`，已经确认现场确实有专门 guard：
+- `_task_has_menxia_verdict(task)`
+- `_suppress_menxia_repeat_review(task_id, trigger=...)`
+
+它会在两处命中：
+1. `handle_scheduler_scan()` 中，如果：
+   - `state == 'Menxia'`
+   - 且 `_task_has_menxia_verdict(task)` 为真
+   就把这轮巡检重试 suppress 掉；
+2. `dispatch_for_state()` 中，如果：
+   - 目标 agent 是 `menxia`
+   - 且 `_task_has_menxia_verdict(task)` 为真
+   就直接跳过自动派发。
+
+#### 2.1 这个 guard 的判定条件很具体
+`_task_has_menxia_verdict()` 不是泛看 runtime_view 是否到了 Menxia，而是看：
+- `progress_log`
+- `flow_log`
+- `now`
+- `block`
+- `output`
+- `_scheduler.lastDispatchError/stallReason`
+- 以及 `tasks_governance_samples.json` 中同任务的对应文本
+
+是否出现这些 verdict markers：
+- `结论：准奏 / 结论：封驳`
+- `已准奏 / 已封驳`
+- `允许进入尚书省派发`
+- `请补齐后再报`
+- `审议完成，封驳 / 审议完成，准奏`
+- `未附中书省方案正文，无法审议 / 方案正文缺失`
+
+也就是说，这个 guard 防的不是“任务疑似已经在门下省”，而是：
+
+> **任务文本里已经出现了明确、可判定的门下审议结论。**
+
+#### 2.2 当前这条任务为什么没被它拦住：因为 scheduler scan 看到的根本不是 `Menxia` 任务
+本轮再次对位现场三层：
+- `tasks_source.json`
+  - `state = Zhongshu`
+  - `sourceLayer = backend_export`
+  - `progress_log = []`
+  - `flow_log` 只有创建与 `Taizi -> Zhongshu`
+- `tasks_runtime_view.json`
+  - `state = Menxia`
+  - `org = 门下省`
+  - 但这是侧车观察层
+- `tasks_governance_samples.json`
+  - **根本没有这条任务**
+
+所以当前真正驱动 `handle_scheduler_scan()` 的主任务视图里，这条任务满足的是：
+- `state == 'Zhongshu'`
+- 没有门下 verdict 文本
+- `_scheduler = {}`
+- `progress_log = []`
+
+那它自然不会命中：
+- `state == 'Menxia' and _task_has_menxia_verdict(task)` 这条 suppress 分支
+
+因此更准确的说法是：
+
+> **现网不是“没有重复送审保护”，而是现有保护只对“主任务视图已经进入 Menxia 且已有明确门下结论”的任务生效；而这条任务在主视图里仍停在 Zhongshu，所以 guard 根本没有机会触发。**
+
+### 3. 这也让“为什么系统明明知道 Menxia，却还是继续派 Zhongshu”彻底说通了
+到这一轮为止，逻辑已经闭环：
+
+1. runtime_view 里确实“知道”这条任务到了 `Menxia`；
+2. 但 runtime_view 是侧车观察层，不是主状态；
+3. backend 主状态仍是 `Zhongshu`；
+4. export 再把这个 `Zhongshu` 写回 `tasks_source.json`；
+5. scheduler scan 只基于主视图判断；
+6. 现有 menxia repeat-review guard 又只对 `state == Menxia` 的主视图任务生效；
+7. 于是系统虽然“某一层知道 Menxia”，但**真正执行调度的那一层依然只看见 Zhongshu**；
+8. 结果就是继续重复派发到 `zhongshu`。
+
+这不是简单的 if 漏写，而是：
+
+> **抑制逻辑被挂在了“正确但更晚的一层状态”上，而调度实际使用的仍是更旧的主视图状态。**
+
+### 4. 当前最准确的新结论
+截至这一轮，最准确的表述应更新为：
+
+> **runtime_view 只做侧车观察，基本属于本轮三层分离方案的设计结果；重复派发之所以没被现有 guard 拦住，不是因为 guard 不存在，而是因为它要求主视图任务已进入 `Menxia` 且出现明确审议 verdict，而当前真正驱动 scheduler scan 的主视图仍停在 `Zhongshu + backend_export + progress_log空 + _scheduler空`，因此 guard 根本没有命中机会。**
+
+### 5. 如果继续往下做，后续已经变成明确的架构/策略选择
+现在后续不再是“再找一个 bug”，而是明确的选择题：
+
+1. **要不要让 runtime_view 对 scheduler 提供抑制信号**
+   - 即便不反写 backend，也允许“同 taskId 的 runtime_view 已到 Menxia/Assigned”时，scan 暂停重派 Zhongshu；
+2. **还是坚持只信主状态，但要更快把 backend 主实体推进到 Menxia**
+   - 这就要求补正式回写桥，而不是继续让 runtime_view 只做展示；
+3. **在桥未补齐前，现有 menxia repeat-review guard 还应增加一层前置抑制**
+   - 不再只看 `state == Menxia`，也看 runtime_view 是否已有同 taskId 的更后态。
+
+一句话收口：
+
+> **现在已经能确定：双真相不是偶发现象而是阶段性设计产物；而重复派发没被现有 guard 拦住，也不是 guard 不存在，而是 guard 挂在 Menxia 主状态层，当前 scheduler 实际消费的却仍是 Zhongshu 旧主视图。**
