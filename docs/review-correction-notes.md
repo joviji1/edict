@@ -1082,3 +1082,161 @@ Redis Streams 现场：
 一句话收口：
 
 > **现在已经能把问题讲完整：不是“edict 有点不稳”，而是“4 月底保留下来的 dual/export 过渡态常驻配置 + backend 导出任务缺失 `_scheduler` 记忆 + dashboard 巡检按旧时间戳判停滞”三者叠加，稳定制造了同一任务的重复派发与主视图落后。**
+
+
+---
+
+## 2026-05-05 继续下钻：backend 主任务实体本身就停在旧态，export 只是把旧态忠实放大
+
+这一轮继续往 backend 主任务实体、调度记忆持久化和 worker 写回链下钻后，现场证据又收紧了一层：
+
+> **当前问题不只是 export 把 `_scheduler` 洗空；更底层的现实是：backend 主任务实体自己就停在 `Zhongshu`，且 `scheduler={}`。export 只是把这个尚未被主链更新的旧实体忠实地导出到了 `tasks_source.json`。**
+
+### 1. backend `/api/tasks` 和 `/api/tasks/live-status` 对这条任务返回的是同一份旧实体
+本轮直接拉 backend API：
+- `GET http://127.0.0.1:18000/api/tasks?limit=50`
+- `GET http://127.0.0.1:18000/api/tasks/live-status`
+
+对同一任务 `bbbf369f-959b-484e-890d-9c28d56b748a` 返回完全一致：
+- `state = Zhongshu`
+- `org = 中书省`
+- `updated_at = 2026-05-01T09:14:30.061384+00:00`
+- `flow_log` 只有两段：
+  - `任务创建 -> Taizi`
+  - `Taizi -> Zhongshu`
+- `progress_log = []`
+- `scheduler = {}`
+- `_scheduler = {}`
+- `output = ""`
+
+这说明：
+
+> **backend 自己并没有持有“已推进到 Menxia”的主任务事实。**
+
+因此此前如果把锅全甩给 export，是不完整的；因为 export 当前导出的，正是 backend 主任务表自己提供的旧任务态。
+
+### 2. runtime 已推进到 `Menxia`，但这一步没有沉淀回 backend 任务实体
+同一任务在 `data/tasks_runtime_view.json` 里现场仍是：
+- `state = Menxia`
+- `org = 门下省`
+- `now = 思考中: 已接旨`
+
+而 backend 主任务实体仍是：
+- `state = Zhongshu`
+- `scheduler = {}`
+- `progress_log = []`
+
+所以现在已经能明确一句话：
+
+> **runtime 会话推进态并没有稳定回写成 backend 主任务实体的状态推进。**
+
+这意味着主问题比“legacy 视图不准”更深：
+- 不是只有 legacy 侧没吃到 runtime 真相；
+- **backend 主任务实体自己也没吃到 runtime 真相。**
+
+### 3. backend 代码里明明有 `scheduler`、`progress_log`、`flow_log` 持久化能力，但当前这条链没有真正打通到主任务态
+这轮继续翻 backend 代码，确认下面几件事都存在：
+
+#### 3.1 Task 模型确实有这些字段
+`edict/backend/app/models/task.py` 已有：
+- `flow_log = JSONB`
+- `progress_log = JSONB`
+- `scheduler = JSONB`
+- `updated_at`
+
+并且 `to_dict()` 会把它们导出为：
+- `flow_log`
+- `progress_log`
+- `scheduler`
+- `_scheduler`
+- `updatedAt`
+
+所以当前 API 返回空 `scheduler` 不是“字段不存在”，而是**数据库里这条任务当前就真是空的**。
+
+#### 3.2 service 层也确实有写这些字段的能力
+`edict/backend/app/services/task_service.py` 里已存在：
+- `transition_state()`：会追加 `flow_log`
+- `add_progress()`：会追加 `progress_log`
+- `update_scheduler()`：会写 `task.scheduler = scheduler`
+
+这说明 backend 不是设计上不支持 scheduler / progress / flow，而是**当前主链没有把 runtime 推进态通过这些入口稳定写回去**。
+
+#### 3.3 dispatch worker 只会写 progress/output，不会直接推进主状态到 `Menxia`
+`edict/backend/app/workers/dispatch_worker.py` 当前对 agent 输出的持久化逻辑是：
+- `await svc.add_progress(task_id, agent, sanitized_stdout or raw_stdout)`
+- 成功时把 `task.output = raw_stdout`
+
+但它并不会自己根据“agent 已接旨”去：
+- `transition_state(..., Menxia)`
+- 或 `update_scheduler(...)`
+
+所以如果 agent/runtime 侧没有另外一条结构化回写链把：
+- `state/org`
+- `scheduler.lastProgressAt/retryCount/snapshot`
+- `progress_log`
+同步回 backend 主实体，
+那 backend 主实体当然就会继续停在旧状态。
+
+这进一步解释了当前现场：
+
+> **dispatch worker 能写“输出痕迹”，但并不等于它会把 runtime 会话推进事实自动提升成 backend 主任务状态。**
+
+### 4. 这也解释了为什么当前 backend API 样本里大量任务 `scheduler={}`、`progress_log=[]`
+本轮现场扫了 backend `/api/tasks` 样本，前几条任务都出现：
+- `scheduler = {}`
+- `progress_log len = 0`
+- `output = ""`
+
+再结合同一轮 `tasks_source.json` 统计：
+- **18/18 条任务 `_scheduler = {}`**
+
+这说明问题不是只出在一条任务上，而是更像：
+
+> **当前 backend 主任务表普遍没有沉淀出前台 scheduler 所依赖的调度记忆。**
+
+所以 dashboard scheduler scan 每次基于 export 回流任务去判停滞时，面对的是一批：
+- `updatedAt` 很老
+- `_scheduler` 为空
+- 没有最近 progress 的任务
+
+于是重复派发就会成为系统性的默认结果，而不是单任务偶发问题。
+
+### 5. 这轮之后，根因链应再补一层“backend 主实体未收敛”
+前面已经确认：
+- dual/export 过渡态常驻
+- export 持续覆盖 `tasks_source.json`
+- `_scheduler` 在 export 产物里为空
+- dashboard scan 因此反复重试
+
+这轮继续下钻后，应再补一句更底层的根因：
+
+> **之所以 export 产物里 `_scheduler` 一直是空的，不只是 export 脚本没补；更是因为 backend 主任务实体本身就没有稳定沉淀 scheduler / progress / runtime 推进态。也就是说，主状态未收敛发生在 backend 主表这一层，而 legacy/export 只是把这个未收敛事实放大了。**
+
+### 6. 当前最准确的结构化表述
+截至这一轮，最准确的主链表述应更新为：
+
+1. **systemd 常驻的 `edict-loop.service` 仍开启 backend export；**
+2. **backend 主任务实体本身仍停在 `Zhongshu + scheduler={}` 的旧态；**
+3. **runtime 会话虽已推进到 `Menxia`，但这一步没有稳定沉淀回 backend 主任务实体；**
+4. **export 只是把 backend 旧态忠实写回 `tasks_source.json`；**
+5. **dashboard scheduler scan 再把这些 `_scheduler` 为空、`updatedAt` 很老的任务反复识别成停滞任务，于是固定节奏重复派发到 `zhongshu`。**
+
+这比之前的说法更接近完整闭环。
+
+### 7. 下一步该继续抠的已再次收紧
+现在继续往下查，不该再泛泛说“看看 backend”。优先级应进一步收紧成：
+
+1. **runtime -> backend 主任务实体 的状态回写链到底缺在哪一跳**
+   - 是没有结构化事件；
+   - 还是有事件但 orchestrator / service 没消费成 `transition_state()`；
+   - 还是写了 progress/output 但没写 state/scheduler。
+
+2. **backend `scheduler` 字段为什么在主任务样本里长期为空**
+   - 是当前根本没走 `update_scheduler()`；
+   - 还是被别的链覆盖清空。
+
+3. **dashboard 是否应该在读取 `backend_export + _scheduler={}` 任务时加保护，避免重复派发雪上加霜**
+
+一句话收口这轮新增发现：
+
+> **现在已经能确认：重复派发的上游不是单纯 legacy/export 错位，而是 backend 主任务实体自己就没有收敛到 runtime 已推进的状态；export 只是把这个旧态忠实同步给了 dashboard。**
