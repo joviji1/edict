@@ -753,3 +753,108 @@ Redis Streams 现场：
 一句话更新这轮继续复查后的最终口径：
 
 > **edict 当前的核心问题已经收紧为“推进态真相提升失败”：runtime 看得到，主视图抬不上去，样本层还会漏收，最终导致 live_status 继续暴露旧的 backend_export 主状态。**
+
+
+---
+
+## 2026-05-05 再继续复查补记：backend export 不是历史残留，而是当前 loop 仍在显式开启
+
+这轮继续往下抠后，已经把一个更底层、也更硬的现场事实钉死：
+
+> **当前 `backend_api_export` 不是旧数据尾巴，也不只是某处文档口径没更新；而是运行中的 `run_loop.sh` 进程现在就带着 `EDICT_ENABLE_BACKEND_EXPORT=true`，在持续执行 backend export 覆盖链。**
+
+### 1. 现场进程环境已直接坐实：run loop 现在就是开着 backend export 跑的
+本轮直接读取运行中 loop 进程 `PID=3800151` 的环境变量：
+- `EDICT_DASHBOARD_PORT=7892`
+- `EDICT_HOME=/root/.openclaw/workspace/edict`
+- **`EDICT_ENABLE_BACKEND_EXPORT=true`**
+
+同时 `scripts/run_loop.sh` 代码里也写得很直白：
+- `BACKEND_EXPORT_ENABLED="${EDICT_ENABLE_BACKEND_EXPORT:-0}"`
+- 只要 `is_true "$BACKEND_EXPORT_ENABLED"`，就会执行：
+  - `export_backend_tasks_to_legacy_json.py`
+
+所以这条线已经不是推测，而是现网硬事实：
+
+> **当前 loop 每轮都会把 backend 导出重新灌回 `tasks_source.json`。**
+
+### 2. `tasks_source.json` 现在 18 条任务全部是 `backend_export`，不是“混入了一部分”
+本轮现场直读：
+- `data/tasks_source.json`
+  - `count = 18`
+  - `layers = {'backend_export': 18}`
+
+这比上一轮“还能看到多条 `backend_export`”更进一步：
+
+> **不是 tasks_source 里还残留几条 backend_export，而是当前整个主任务视图 18 条全都来自 backend_export。**
+
+也就是说，现阶段如果还把 `tasks_source.json` 当成“runtime + governance + archive 聚合后的主真相”，那就是错的；它当前实际更像 backend export 覆盖后的 legacy 主出口。
+
+### 3. `tasks_backend_export_meta.json` 也在持续证明这件事不是旧脏文件假象
+本轮直读：
+- `data/tasks_backend_export_meta.json`
+  - `taskSource = backend_api_export`
+  - `backendUrl = http://127.0.0.1:18000`
+  - `count = 18`
+  - `exportedAt = 2026-05-05T04:19:02.593892+00:00`
+
+再结合 `refresh_live_data.py` 当前逻辑：
+- 只要 `tasks_source.json` 里存在 `sourceLayer == 'backend_export'`
+- 就会继续把 `live_status.taskSource` 写成 `backend_api_export`
+
+所以：
+
+> **`live_status.taskSource = backend_api_export` 不是 refresh 层误判，它只是把上游真实现场诚实反映出来。真正的问题不在 refresh，而在 loop 当前确实还在导出 backend 覆盖 tasks_source。**
+
+### 4. dashboard 日志还暴露出第二个现象：这条任务正在被高频重复派发，不是单次成功就收口
+`journalctl -u edict-dashboard.service --since '2026-05-05 11:30:00'` 现场可见：
+- 从 `11:31` 到 `12:17`，几乎每两分钟一次：
+  - `推进后自动派发 -> zhongshu`
+  - `自动派发成功 -> zhongshu`
+
+也就是说：
+
+> **这条任务不是“派发成功一次后就稳定停住”，而是在持续被重复派发到 zhongshu。**
+
+这进一步说明：
+- 上层看到的“还能派发”并不等于“已经稳定”；
+- 现网仍存在重复触发 / 重复推进 / 主状态未收敛的问题。
+
+### 5. 因此，这轮之后必须把前面的结论再修正一次
+前面我已经把口径从：
+- “完全不可用”
+修正为：
+- “可派发，但多层状态脱节”
+又修正为：
+- “runtime 真相提升失败”
+
+现在这一轮继续往下抠后，还要再补一个更底层的现实：
+
+> **当前 `tasks_source.json` 根本不处在“已摆脱 backend export、主要由 runtime/governance/archive 聚合主导”的状态；相反，运行中的 loop 明确开着 `EDICT_ENABLE_BACKEND_EXPORT=true`，因此 backend export 仍在作为现网主覆盖链生效。**
+
+这意味着前面很多“为什么 source 没吃到 runtime 真相”的分析，虽然方向没错，但还不够到底；因为在当前现场里：
+- runtime / governance / rebuild 确实在跑；
+- **但它们产出的主视图，会被后续 backend export 再覆盖一遍。**
+
+换句话说：
+
+> **不是单纯聚合策略吃掉了 runtime 真相，而是 runtime 真相即便短暂聚合出来，也会被当前仍开启的 backend export 主覆盖链重新压回 backend 口径。**
+
+### 6. 这轮继续复查后的新主结论
+截至这一轮，最准确的现场结论应更新为：
+
+> **edict 当前并非“任务派不出去”；相反，它还能高频成功派发到 zhongshu。真正的主问题是：当前 loop 仍显式开启 `EDICT_ENABLE_BACKEND_EXPORT=true`，导致 `tasks_source.json` 全量处于 backend_export 覆盖态；因此 runtime / governance / rebuild 即便识别出更新治理推进态，也难以把它稳定保留为主视图真相。与此同时，dashboard 侧还在对同一任务高频重复派发，说明稳定性问题不止是展示失真，还包含重复触发未收敛。**
+
+### 7. 下一步优先级必须再次调整
+现在如果继续查，优先级不该再是泛泛“看看聚合脚本”。应改成：
+
+1. **先查 / 收掉当前谁把 `EDICT_ENABLE_BACKEND_EXPORT=true` 带进了运行中的 loop**
+   - 不把这条主覆盖链停掉，后面看再多聚合细节也容易被覆盖；
+2. **再验证停掉 backend export 后，runtime / rebuild / governance 三层能否自然收敛**
+   - 到那时再判断 `rebuild_task_views.py` 和 `sync_governance_samples.py` 的策略问题还有多少是真问题；
+3. **最后再收重复派发问题**
+   - 因为现在日志已经坐实它在按 2 分钟级节奏反复派发同一任务，不是单轮偶发。
+
+一句话收口这轮新增发现：
+
+> **当前最大的隐藏前提已经揭开：backend export 不是历史，而是现行主覆盖链；不先把这条链路收掉，就很难让 source/live-status 真正反映 runtime 推进态。**
