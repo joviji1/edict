@@ -1366,3 +1366,156 @@ Redis Streams 现场：
 一句话收口：
 
 > **现在已经基本坐实：runtime 会推进、backend 不会跟；不是因为 backend 不支持状态流转，而是因为当前根本没有一条把 runtime 推进事实自动喂进 backend 状态机的消费链。**
+
+
+---
+
+## 2026-05-05 继续下钻：runtime_view 的 `Menxia` 来自 transcript 语义推断，而且这条桥是单向的
+
+这一轮继续顺着“runtime 推进事实为什么没回写 backend”往下查，现场已经把桥中间那段彻底看清了：
+
+> **`tasks_runtime_view.json` 里的 `Menxia` 不是 backend 产物，也不是结构化状态事件；它是 `sync_from_openclaw_runtime.py` 从 OpenClaw session transcript 文本里做语义推断得到的。更关键的是：这条脚本只写 runtime_view，不反写 backend。**
+
+### 1. `sync_from_openclaw_runtime.py` 的职责本质是“观察会话”，不是“推进主状态”
+本轮直接读脚本后，可确认其主流程是：
+- 扫描 `~/.openclaw/agents/*/sessions/sessions.json`
+- 对每个 session 读取 transcript (`sessionFile`)
+- 抽取 activity / rawText
+- 对 `:edict-dispatch` 会话尝试：
+  - `extract_task_id_from_activity(activity)`
+  - `infer_governance_state_from_activity(activity)`
+- 组装成 runtime 任务对象
+- 最后只做：
+  - `atomic_json_write(RUNTIME_VIEW, tasks)`
+
+这里非常关键：
+
+> **脚本没有任何一行去调用 backend API、`transition_state()`、`update_scheduler()` 或写数据库。**
+
+它的产物只有：
+- `data/tasks_runtime_view.json`
+- 以及兼容聚合用的 archive 同步
+
+因此这条链从设计上就是：
+
+> **会话观测层 / runtime 实时映射层**
+
+而不是：
+
+> **主任务状态机写回层**
+
+### 2. `Menxia` 是怎么推出来的：靠 transcript 文本命中规则，不是结构化真相
+脚本里 `infer_governance_state_from_activity(activity)` 现在用的是文本规则：
+- 如果命中 `状态更新: X -> Y` 这类文本，取目标状态；
+- 或命中这些关键词：
+  - `已在中书省 / 转交中书省 / 中书省起草` → `Zhongshu`
+  - `已在门下省 / 转交门下省 / 门下省审议` → `Menxia`
+  - `已在尚书省 / 转交尚书省 / 尚书省派发` → `Assigned`
+
+而 `data/tasks_runtime_view.json` 里这条任务当前现场内容也正好印证了这一点：
+- `sessionKey = agent:zhongshu:edict-dispatch`
+- `taskId = bbbf369f-959b-484e-890d-9c28d56b748a`
+- `state = Menxia`
+- `org = 门下省`
+- `activity` 里多次出现 assistant 文本：
+  - `已接旨`
+  - `看板状态：Menxia`
+  - `状态更新: Zhongshu -> Menxia`
+  - `当前仍卡在门下审议链路故障`
+
+因此：
+
+> **runtime_view 里的 `Menxia`，并不是 backend 主任务实体真实推进到了 Menxia，而是 session transcript 中有足够强的文本信号，被 runtime 同步脚本语义推断成 Menxia。**
+
+这也解释了为什么它能比 backend“看起来更先进”：
+- 它读的是 agent 会话文本世界；
+- backend 读的是结构化任务状态世界；
+- 两者没有自动收敛。
+
+### 3. 这条桥为什么天然不会回写 backend：脚本设计目标就不是反写
+`sync_from_openclaw_runtime.py` 当前主写动作只有：
+- `atomic_json_write(RUNTIME_VIEW, tasks)`
+- `atomic_json_write(ARCHIVE_FILE, archive)`
+- `write_status(...)`
+
+没有：
+- HTTP 请求 backend `/api/tasks/{id}/transition`
+- backend `/api/tasks/{id}/scheduler`
+- DB 直接写入
+- 事件总线 publish `task.state.*`
+
+所以这条链当前的产品语义是：
+
+> **“把 OpenClaw runtime sessions 观察成一层治理侧车视图”**
+
+而不是：
+
+> **“把 runtime 观察结果回灌成 backend 主状态”**
+
+换句话说：
+
+> **今天看到 runtime_view 比 backend 新，不是它‘漏了一步没写回’，而是它从一开始就不是拿来写回 backend 的。**
+
+### 4. 这也让根因链再清楚一层：当前系统其实并行维护了两套状态世界
+截至这一轮，已经可以非常明确地区分：
+
+#### 4.1 backend 主状态世界
+- 来源：`TaskService.transition_state()` / `review_action()` / orchestrator 停滞处理
+- 载体：DB task entity
+- 对外：`/api/tasks`、`/api/tasks/live-status`
+- 当前问题：这条任务还停在 `Zhongshu + scheduler={}`
+
+#### 4.2 runtime 会话观察世界
+- 来源：OpenClaw session transcript 文本
+- 推断器：`sync_from_openclaw_runtime.py`
+- 载体：`tasks_runtime_view.json`
+- 当前状态：这条任务被语义推断到 `Menxia`
+
+这两套世界之间目前缺的不是“小同步 bug”，而是：
+
+> **根本没有“观测到 runtime 推进 → 结构化确认 → 写回 backend 主状态”的桥。**
+
+### 5. 所以现在终于能解释“为什么会出现 runtime 看起来更对，但系统主链仍重复派发”
+因为当前主链实际依赖的是：
+- backend 主任务实体
+- backend export 回流到 tasks_source
+- dashboard scan 基于 source + `_scheduler`
+
+而不是 runtime_view。
+
+runtime_view 只是：
+- 一层更接近会话现场的侧车观察面板；
+- 能给人看出“其实会话已经到 Menxia 了”；
+- 但它对 backend 主状态、scheduler 和记忆没有强制约束力。
+
+因此：
+
+> **runtime_view 就算比 backend 更接近现场，也拦不住 dashboard 继续根据 backend 旧态重复派发。**
+
+### 6. 这轮之后，对“缺桥”的定义可以再精确一点
+前面我已经把问题收紧成：
+- 缺少 `agent.output -> backend state machine` 的消费链。
+
+这轮继续查后，可以再精确成：
+
+> **当前不是简单缺一个事件消费者，而是整个 runtime sidecar 方案本身只负责“观察和推断”，从设计上就没有承担“主状态反写”的职责。因此 backend 与 runtime_view 的分叉不是偶发现象，而是当前架构职责边界天然造成的结果。**
+
+### 7. 当前最准确的主结论
+截至这一轮，最准确的表述应更新为：
+
+> **`tasks_runtime_view.json` 里的 `Menxia` 不是 backend 主任务状态，而是 `sync_from_openclaw_runtime.py` 根据 OpenClaw transcript 文本（如“状态更新: Zhongshu -> Menxia”“当前仍卡在门下审议”）做出的语义推断；该脚本只写 runtime_view，不反写 backend。因此当前系统天然并行存在“会话观察真相”和“backend 主状态真相”两套世界，而 dashboard 重复派发依然由后者主导。**
+
+### 8. 下一步若继续查，已经非常具体
+如果继续往下抠，后续应明确分成两类选择题：
+
+1. **架构选择题**
+   - runtime_view 以后是否要继续只做侧车观察层；
+   - 还是要新增“观察结果 -> 结构化状态回写”的正式桥。
+
+2. **防误触选择题**
+   - 在桥没补之前，dashboard 是否应把 runtime_view 中明确已 `Menxia/Assigned` 的同 taskId 任务视为重复派发抑制信号；
+   - 否则 backend 旧态会持续压过 runtime 侧更接近现场的事实。
+
+一句话收口：
+
+> **现在已经基本看清：runtime_view 的 `Menxia` 是“看出来的”，backend 的 `Zhongshu` 是“写进去的”；前者不会自动改后者，所以重复派发不是偶然，而是这套双真相架构在未加桥接与抑制时的自然结果。**
