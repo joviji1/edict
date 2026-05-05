@@ -858,3 +858,85 @@ Redis Streams 现场：
 一句话收口这轮新增发现：
 
 > **当前最大的隐藏前提已经揭开：backend export 不是历史，而是现行主覆盖链；不先把这条链路收掉，就很难让 source/live-status 真正反映 runtime 推进态。**
+
+
+---
+
+## 2026-05-05 再继续补记：systemd 级来源已经钉死，重复派发也有了稳定节奏
+
+这一轮继续往上追，已经把来源链和现象链都钉死到 service 级：
+
+### 1. `EDICT_ENABLE_BACKEND_EXPORT=true` 的来源不再是手工 shell，而是 `edict-loop.service`
+现场 `systemctl cat edict-loop.service` 已明确显示：
+- `Environment=EDICT_ENABLE_BACKEND_EXPORT=true`
+- `ExecStart=/usr/bin/bash /root/.openclaw/workspace/edict/scripts/run_loop.sh 15 120`
+- `Requires=edict-dashboard.service`
+
+同时 `systemctl --no-pager --full status edict-loop.service` 显示：
+- 服务名：`edict-loop.service - edict data refresh loop`
+- `Active: active (running) since Tue 2026-05-05 07:33:23 CST; 6h ago`
+- 主进程：`PID 3800151`
+- 主命令：`/usr/bin/bash /root/.openclaw/workspace/edict/scripts/run_loop.sh 15 120`
+
+这意味着：
+
+> **backend export 之所以一直存在，不是因为某个孤儿 bash 偶发残留，而是因为 systemd 的 edict-loop 服务本身就被配置成了显式开启状态。**
+
+### 2. 当前主视图被 backend_export 全量覆盖，已经不是“残留几条”的问题
+现场再次直读：
+- `data/tasks_source.json`
+  - `state = Zhongshu`
+  - `org = 中书省`
+  - `sourceLayer = backend_export`
+  - `flow_log = [Taizi, Zhongshu]`
+  - `progress_log = []`
+- `data/live_status.json`
+  - 对应同一任务也仍是：
+    - `state = Zhongshu`
+    - `org = 中书省`
+    - `sourceLayer = backend_export`
+
+结合前一轮已经确认的全量分布：
+- `tasks_source.json` 18 条任务全部 `backend_export`
+- `tasks_backend_export_meta.json` 仍存在
+- `live_status.taskSource` 继续为 `backend_api_export`
+
+因此现网口径应再明确一次：
+
+> **当前主视图不是“混入了一些 backend_export”，而是已经被 backend_export 全量覆盖。**
+
+### 3. 重复派发的时间节奏已经稳定到肉眼可见
+`journalctl -u edict-dashboard.service --since '2026-05-05 13:50:00'` 可见从 13:57 一直到 14:19，几乎每两分钟一次固定重复：
+- `推进后自动派发 → zhongshu`
+- `自动派发成功 → zhongshu`
+
+这说明：
+
+> **同一任务不是偶发被派两次，而是在一个稳定的定时巡检/自动派发节奏下持续被重复推进。**
+
+这个现象的意义是：
+- 不再是“偶发噪声”；
+- 而是**调度层的默认行为仍在持续触发**；
+- 这也解释了为什么 `tasks_source.json` 一直难以沉降成更干净的 runtime 真相。
+
+### 4. 这轮继续复查后的最新收口
+前面已经把结论逐步收紧为：
+- 不是完全不可用；
+- 不是单纯多层状态脱节；
+- 不是单纯 runtime 真相提升失败；
+- 不是单纯 backend_export 残留。
+
+现在再补上 systemd 级来源后，最准确的现场结论应改成：
+
+> **edict 当前的稳定性问题是“systemd 级 backend_export 全量开启 + dashboard 侧定时自动派发重复触发”叠加造成的：loop 服务持续把主视图导回 backend_export，dashboard 又按定时巡检持续把同一任务重新派发到 zhongshu，于是 runtime / governance / live_status 之间很难形成稳定的单一真相。**
+
+### 5. 下一步真正该查的已非常具体
+如果继续往下查，已不该再停留在“看数据层有没有问题”，而应该直接问：
+1. **谁把 `edict-loop.service` 设成 `EDICT_ENABLE_BACKEND_EXPORT=true` 作为当前常驻配置；**
+2. **dashboard 侧为什么会以固定节奏反复把同一任务推进后自动派发到 zhongshu；**
+3. **这两条链路是否是同一个 cutover 设计下的过渡态遗留，还是当前现网误配置；**
+4. **如果要恢复 runtime 真相，应该先关哪一个总闸。**
+
+一句话收口：
+
+> **现在已经不是“有没有问题”的阶段，而是已经明确到：systemd 级 backend export 常驻开启，配合 dashboard 定时重复派发，正在持续制造主视图与 runtime 的错位。**
