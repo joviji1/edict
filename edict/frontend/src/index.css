@@ -769,3 +769,44 @@ code { font-size: 11px; background: var(--panel2); padding: 2px 6px; border-radi
 @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
 @keyframes pulse { 0%, 100% { opacity: .6; } 50% { opacity: 1; } }
 @keyframes bounceIn { 0% { transform: scale(0); } 60% { transform: scale(1.3); } 100% { transform: scale(1); } }
+
+/* ══ PendingConfirm Banner (embedded in EdictBoard) ══ */
+.pending-banner-wrap { margin-bottom: 14px; }
+.pending-banner {
+  display: flex; align-items: center; gap: 10px; padding: 12px 18px;
+  background: linear-gradient(90deg, rgba(245,200,66,.12), rgba(106,158,255,.06));
+  border: 1px solid rgba(245,200,66,.3); border-radius: 12px;
+  cursor: pointer; transition: border-color .15s, background .15s;
+}
+.pending-banner:hover { border-color: rgba(245,200,66,.55); background: linear-gradient(90deg, rgba(245,200,66,.18), rgba(106,158,255,.08)); }
+.pending-banner-icon { font-size: 20px; }
+.pending-banner-text { flex: 1; font-size: 13px; color: var(--text); }
+.pending-banner-text strong { color: #f5c842; font-size: 15px; }
+.pending-banner-toggle { font-size: 12px; color: var(--acc); white-space: nowrap; }
+.pending-banner-body {
+  display: flex; flex-direction: column; gap: 8px;
+  margin-top: 10px; padding: 12px;
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 10px;
+}
+.pending-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 14px; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 10px;
+}
+.pending-item-info { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+.pending-item-id { font-size: 11px; color: var(--acc); font-weight: 700; white-space: nowrap; }
+.pending-item-title { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pending-item-by { font-size: 10px; color: var(--muted); white-space: nowrap; }
+.pending-item-actions { display: flex; gap: 6px; }
+
+/* ══ Edict Highlight (JJC-* colored left bar) ══ */
+.edict-card.edict-highlight { border-left: 3px solid #ffd700; }
+.edict-card.sess-card-compact { border-left: 3px solid var(--line); }
+
+/* ══ Session cards compact mode (used in unified board) ══ */
+.sc-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.sc-emoji { font-size: 20px; flex-shrink: 0; }
+.sc-agent { font-size: 12px; font-weight: 700; color: var(--acc); }
+.sc-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sc-time { font-size: 10px; color: var(--muted); }

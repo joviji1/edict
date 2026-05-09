@@ -77,9 +77,9 @@ export default function ModelConfig() {
     try {
       const r = await api.setModel(agentId, model);
       if (r.ok) {
-        setStatusMap((p) => ({ ...p, [agentId]: { cls: 'ok', text: '✅ 已提交，Gateway 重启中（约5秒）' } }));
+        setStatusMap((p) => ({ ...p, [agentId]: { cls: 'ok', text: '✅ 已提交，Gateway 重启中（通常约10秒，以运行态为准）' } }));
         toast(agentId + ' 模型已更改', 'ok');
-        setTimeout(() => loadAgentConfig(), 5500);
+        setTimeout(() => loadAgentConfig(), 12000);
       } else {
         setStatusMap((p) => ({ ...p, [agentId]: { cls: 'err', text: '❌ ' + (r.error || '错误') } }));
       }

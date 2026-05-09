@@ -68,8 +68,11 @@ export const api = {
   morningBrief: () => fetchJ<MorningBrief>(`${API_BASE}/api/morning-brief`),
   morningConfig: () => fetchJ<SubConfig>(`${API_BASE}/api/morning-config`),
   agentsStatus: () => fetchJ<AgentsStatusData>(`${API_BASE}/api/agents-status`),
-  jidipuPanel: (limit = 18) =>
-    fetchJ<JidipuPanelData>(`${API_BASE}/api/jidipu-panel?limit=${encodeURIComponent(String(limit))}`),
+  jidipuPanel: (limit = 18, taskId?: string) => {
+    let url = `${API_BASE}/api/jidipu-panel?limit=${encodeURIComponent(String(limit))}`;
+    if (taskId) url += `&task_id=${encodeURIComponent(taskId)}`;
+    return fetchJ<JidipuPanelData>(url);
+  },
   guoshiguanPanel: (query = '', limit = 18) =>
     fetchJ<GuoshiguanPanelData>(
       `${API_BASE}/api/guoshiguan-panel?limit=${encodeURIComponent(String(limit))}&q=${encodeURIComponent(query)}`
@@ -104,6 +107,8 @@ export const api = {
     postJ<ActionResult>(`${API_BASE}/api/review-action`, { taskId, action, comment }),
   advanceState: (taskId: string, comment: string) =>
     postJ<ActionResult>(`${API_BASE}/api/advance-state`, { taskId, comment }),
+  dispatchTask: (taskId: string, targetDept: string, comment: string) =>
+    postJ<ActionResult>(`${API_BASE}/api/dispatch-task`, { taskId, targetDept, comment }),
   archiveTask: (taskId: string, archived: boolean) =>
     postJ<ActionResult>(`${API_BASE}/api/archive-task`, { taskId, archived }),
   archiveAllDone: () =>
@@ -192,6 +197,7 @@ export interface Task {
   title: string;
   state: string;
   org: string;
+  targetDept?: string;
   now: string;
   eta: string;
   block: string;
@@ -207,6 +213,8 @@ export interface Task {
   sourceMeta?: Record<string, unknown>;
   activity?: ActivityEntry[];
   _prev_state?: string;
+  legacy_id?: string;
+  meta?: Record<string, unknown>;
 }
 
 export interface SyncStatus {

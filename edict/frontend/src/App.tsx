@@ -4,12 +4,10 @@ import EdictBoard from './components/EdictBoard';
 import MonitorPanel from './components/MonitorPanel';
 import ModelConfig from './components/ModelConfig';
 import SkillsConfig from './components/SkillsConfig';
-import SessionsPanel from './components/SessionsPanel';
 import MemorialPanel from './components/MemorialPanel';
 import TemplatePanel from './components/TemplatePanel';
 import MorningPanel from './components/MorningPanel';
 import RelayArchivePanel from './components/RelayArchivePanel';
-import ApprovalPanel from './components/ApprovalPanel';
 import OfficialPanel from './components/OfficialPanel';
 import TaskModal from './components/TaskModal';
 import Toaster from './components/Toaster';
@@ -93,8 +91,7 @@ export default function App() {
   const syncOk = sync?.ok;
 
   const tabBadge = (key: string): string => {
-    if (key === 'edicts') return String(activeEdicts.length);
-    if (key === 'sessions') return String(tasks.filter((t) => !isEdict(t)).length);
+    if (key === 'edicts') return String(tasks.filter((t) => !['Done', 'Cancelled'].includes(t.state) && !isArchived(t)).length);
     if (key === 'memorials') return String(edicts.filter((t) => ['Done', 'Cancelled'].includes(t.state)).length);
     if (key === 'monitor') {
       const activeDepts = tasks.filter((t) => isEdict(t) && t.state === 'Doing').length;
@@ -136,14 +133,12 @@ export default function App() {
       </div>
 
       {activeTab === 'edicts' && <EdictBoard />}
-      {activeTab === 'approval' && <ApprovalPanel />}
       {activeTab === 'court' && <CourtDiscussion />}
       {activeTab === 'monitor' && <MonitorPanel />}
       {activeTab === 'relay' && <RelayArchivePanel />}
       {activeTab === 'officials' && <OfficialPanel />}
       {activeTab === 'models' && <ModelConfig />}
       {activeTab === 'skills' && <SkillsConfig />}
-      {activeTab === 'sessions' && <SessionsPanel />}
       {activeTab === 'memorials' && <MemorialPanel />}
       {activeTab === 'templates' && <TemplatePanel />}
       {activeTab === 'morning' && <MorningPanel />}

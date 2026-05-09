@@ -59,7 +59,9 @@ export function stateLabel(t: Task): string {
 }
 
 export function isEdict(t: Task): boolean {
-  return /^JJC-/i.test(t.id || '');
+  if (/^JJC-/i.test(t.id || '')) return true;
+  const lid = t.legacy_id || (t.meta as Record<string, unknown>)?.legacy_id;
+  return /^JJC-/i.test(String(lid || ''));
 }
 
 export function isSession(t: Task): boolean {
@@ -84,18 +86,16 @@ export function getPipeStatus(t: Task): PipeStatus[] {
 
 export type TabKey =
   | 'edicts' | 'monitor' | 'officials' | 'models'
-  | 'skills' | 'sessions' | 'memorials' | 'templates' | 'morning' | 'court' | 'relay' | 'approval';
+  | 'skills' | 'memorials' | 'templates' | 'morning' | 'court' | 'relay';
 
 export const TAB_DEFS: { key: TabKey; label: string; icon: string }[] = [
   { key: 'edicts',    label: '旨意看板', icon: '📜' },
-  { key: 'approval',  label: '待批专面板', icon: '🛡️' },
   { key: 'court',     label: '朝堂议政', icon: '🏛️' },
   { key: 'monitor',   label: '省部调度', icon: '🔌' },
   { key: 'relay',     label: '急递铺 / 国史馆', icon: '🚀' },
   { key: 'officials', label: '官员总览', icon: '👔' },
   { key: 'models',    label: '模型配置', icon: '🤖' },
   { key: 'skills',    label: '技能配置', icon: '🎯' },
-  { key: 'sessions',  label: '小任务',   icon: '💬' },
   { key: 'memorials', label: '奏折阁',   icon: '📜' },
   { key: 'templates', label: '旨库',     icon: '📋' },
   { key: 'morning',   label: '天下要闻', icon: '🌅' },
@@ -270,6 +270,8 @@ interface AppStore {
   // UI State
   activeTab: TabKey;
   edictFilter: 'active' | 'archived' | 'all';
+  edictSourceFilter: 'all' | 'jjc';  // 'jjc' = JJC-* edicts only, 'all' = all tasks
+  edictAgentFilter: string;           // agent id or 'all'
   sessFilter: string;
   tplCatFilter: string;
   selectedOfficial: string | null;
@@ -282,6 +284,8 @@ interface AppStore {
   // Actions
   setActiveTab: (tab: TabKey) => void;
   setEdictFilter: (f: 'active' | 'archived' | 'all') => void;
+  setEdictSourceFilter: (f: 'all' | 'jjc') => void;
+  setEdictAgentFilter: (f: string) => void;
   setSessFilter: (f: string) => void;
   setTplCatFilter: (f: string) => void;
   setSelectedOfficial: (id: string | null) => void;
@@ -321,6 +325,8 @@ export const useStore = create<AppStore>((set, get) => ({
 
   activeTab: 'edicts',
   edictFilter: 'active',
+  edictSourceFilter: 'all',
+  edictAgentFilter: 'all',
   sessFilter: 'all',
   tplCatFilter: '全部',
   selectedOfficial: null,
@@ -332,12 +338,14 @@ export const useStore = create<AppStore>((set, get) => ({
   setActiveTab: (tab) => {
     set({ activeTab: tab });
     const s = get();
-    if (['models', 'skills', 'sessions'].includes(tab)) s.loadAgentConfig();
+    if (['models', 'skills'].includes(tab)) s.loadAgentConfig();
     if (tab === 'officials' && !s.officialsData) s.loadOfficials();
     if (tab === 'monitor') s.loadAgentsStatus();
     if (tab === 'morning' && !s.morningBrief) s.loadMorning();
   },
   setEdictFilter: (f) => set({ edictFilter: f }),
+  setEdictSourceFilter: (f) => set({ edictSourceFilter: f }),
+  setEdictAgentFilter: (f) => set({ edictAgentFilter: f }),
   setSessFilter: (f) => set({ sessFilter: f }),
   setTplCatFilter: (f) => set({ tplCatFilter: f }),
   setSelectedOfficial: (id) => set({ selectedOfficial: id }),
@@ -509,7 +517,12 @@ export function esc(s: string | undefined | null): string {
 export function timeAgo(iso: string | undefined): string {
   if (!iso) return '';
   try {
-    const d = new Date(iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z');
+    let normalized = iso;
+    if (normalized.includes(' ') && !normalized.includes('T')) normalized = normalized.replace(' ', 'T');
+    const looksIso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(normalized);
+    const hasTimezone = /(?:Z|[+\-]\d{2}:\d{2})$/i.test(normalized);
+    if (looksIso && !hasTimezone) normalized += 'Z';
+    const d = new Date(normalized);
     if (isNaN(d.getTime())) return '';
     const diff = Date.now() - d.getTime();
     const mins = Math.floor(diff / 60000);

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { useStore, timeAgo } from '../store';
+import { formatDashboardDateTime } from '../time';
 
 type ApprovalItem = {
   taskId: string;
@@ -50,7 +51,7 @@ function statusClass(value?: string) {
 
 function fmtTime(value?: string) {
   if (!value) return '待补时间';
-  return `${value} · ${timeAgo(value)}`;
+  return `${formatDashboardDateTime(value, { showSeconds: true })} · ${timeAgo(value)}`;
 }
 
 export default function ApprovalPanel() {

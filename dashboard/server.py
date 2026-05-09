@@ -186,7 +186,8 @@ def _sync_governance_samples(task_data_dir=None):
 
 
 def _post_save_tasks(tasks, task_data_dir):
-    _notify_pending_confirm_tasks(tasks, task_data_dir)
+    if _notify_pending_confirm_tasks(tasks, task_data_dir):
+        atomic_json_write(task_data_dir / 'tasks_source.json', tasks)
     _sync_governance_samples(task_data_dir)
     # Trigger refresh (异步，不阻塞，避免僵尸进程)
     script = task_data_dir.parent / 'scripts' / 'refresh_live_data.py'
@@ -277,6 +278,7 @@ def _task_notification_url(task_id):
 
 
 def _notify_pending_confirm_tasks(tasks, base_dir=None):
+    changed = False
     for task in tasks:
         if not isinstance(task, dict):
             continue
@@ -305,7 +307,8 @@ def _notify_pending_confirm_tasks(tasks, base_dir=None):
         if _send_custom_notification(title, content, _task_notification_url(task.get('id')), base_dir=base_dir):
             notifications['pending_confirm_sent'] = True
             notifications['pending_confirm_sent_at'] = now_iso()
-
+            changed = True
+    return changed
 
 def _notify_review_result(task, action, comment='', base_dir=None):
     if not isinstance(task, dict):
@@ -365,10 +368,14 @@ def _create_task_via_backend(*, legacy_id, title, org='中书省', official='中
         return {'ok': False, 'error': f'backend create failed: {e}'}
 
 
+# 近期已创建的 legacy ID 缓存，防止 export 刷新前重复分配
+_recently_created_legacy_ids: set = set()
+
 def _next_legacy_task_id(tasks, today, preferred=None):
     prefix = f'JJC-{today}-'
     task_ids = [str(t.get('id', '') or '').strip() for t in tasks if isinstance(t, dict)]
     used = {task_id for task_id in task_ids if task_id.startswith(prefix)}
+    used |= {lid for lid in _recently_created_legacy_ids if lid.startswith(prefix)}
     if preferred:
         preferred = str(preferred).strip()
         if preferred.startswith(prefix) and preferred not in used:
@@ -1162,6 +1169,7 @@ def handle_create_task(title, org='中书省', official='中书令', priority='n
             target_dept=target_dept,
         )
         if backend_result.get('ok'):
+            _recently_created_legacy_ids.add(candidate_task_id)
             log.info(f'创建任务(backend): {backend_result.get("taskId") or backend_result.get("legacyId") or candidate_task_id} | {title[:40]}')
             return backend_result
         log.warning(f'backend create-task failed for {candidate_task_id}: {backend_result.get("error")}')
@@ -1493,9 +1501,6 @@ def wake_agent(agent_id, message=''):
         return {'ok': False, 'error': f'{agent_id} 工作空间不存在，请先配置'}
     if not _check_gateway_alive():
         return {'ok': False, 'error': 'Gateway 未启动，请先运行 openclaw gateway start'}
-    if agent_id == 'taizi':
-        log.warning('⚠️ 跳过 taizi 唤醒：main 会话保护已生效，避免与 gateway 主会话重入冲突')
-        return {'ok': True, 'message': 'taizi 唤醒已跳过：main 会话保护已生效'}
 
     # agent_id 直接作为 runtime_id（openclaw agents list 中的注册名）
     runtime_id = agent_id
@@ -1507,11 +1512,26 @@ def wake_agent(agent_id, message=''):
             if not openclaw_bin:
                 log.warning(f'⚠️ {agent_id} 唤醒跳过: OpenClaw CLI 未找到')
                 return
-            cmd = [openclaw_bin, 'agent', '--agent', runtime_id, '-m', msg, '--timeout', '120']
+            # 使用 gateway call + sessionKey 实现 session 隔离
+            import uuid as _uuid
+            _session_key = f'agent:{agent_id}:edict-dispatch'
+            _idempotency_key = f'edict-wake-{agent_id}-{_uuid.uuid4().hex[:8]}'
+            _params = {
+                'message': msg,
+                'agentId': agent_id,
+                'sessionKey': _session_key,
+                'idempotencyKey': _idempotency_key,
+            }
+            cmd = [
+                openclaw_bin, 'gateway', 'call', 'agent',
+                '--params', json.dumps(_params, ensure_ascii=False),
+                '--timeout', '130000',
+                '--json',
+            ]
             log.info(f'🔔 唤醒 {agent_id}...')
             # 带重试（最多2次）
             for attempt in range(1, 3):
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=130)
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=140)
                 if result.returncode == 0:
                     log.info(f'✅ {agent_id} 已唤醒')
                     return
@@ -1522,7 +1542,7 @@ def wake_agent(agent_id, message=''):
                     time.sleep(5)
             log.error(f'❌ {agent_id} 唤醒最终失败')
         except subprocess.TimeoutExpired:
-            log.error(f'❌ {agent_id} 唤醒超时(130s)')
+            log.error(f'❌ {agent_id} 唤醒超时(140s)')
         except Exception as e:
             log.warning(f'⚠️ {agent_id} 唤醒异常: {e}')
     threading.Thread(target=do_wake, daemon=True).start()
@@ -1918,7 +1938,7 @@ def get_timeout_summary(limit=8):
     }
 
 
-def get_jidipu_panel(limit=12):
+def get_jidipu_panel(limit=12, task_id=None):
     """急递铺最小闭环：聚合派发、通知、审批、重试/升级等消息流摘要。"""
     tasks = load_tasks()
     items = []
@@ -1931,6 +1951,8 @@ def get_jidipu_panel(limit=12):
     }
 
     def _push(item):
+        if task_id and item.get('taskId') != task_id:
+            return
         items.append(item)
         kind = item.get('kind')
         if kind == 'dispatch':
@@ -1982,11 +2004,11 @@ def get_jidipu_panel(limit=12):
                 base['kind'] = 'retry'
                 base['kindLabel'] = '重试'
                 _push(base)
-            elif any(key in remark for key in ('派发', '下旨', '接旨', '流转', '回奏')):
+            elif any(key in remark for key in ('派发', '下旨', '接旨', '流转', '回奏', '创建', '分拣', '推进', '转入', '转交', '已转', '派给', '送达')):
                 base['kind'] = 'dispatch'
                 base['kindLabel'] = '派发'
                 _push(base)
-            elif any(key in remark for key in ('准奏', '封驳', '御批', '批示')):
+            elif any(key in remark for key in ('准奏', '封驳', '御批', '批示', '审议', '通过', '驳回', '批准', '退回')):
                 base['kind'] = 'approval'
                 base['kindLabel'] = '批示'
                 _push(base)
@@ -2441,6 +2463,30 @@ def handle_scheduler_scan(threshold_sec=600):
         if state == 'Blocked':
             continue
 
+        raw_scheduler = task.get('_scheduler')
+        export_guard_threshold = max(60, int(threshold_sec or 600))
+        source_layer = str(task.get('sourceLayer') or '').strip().lower()
+        had_empty_scheduler = not isinstance(raw_scheduler, dict) or not bool(raw_scheduler)
+        task_updated_at = _parse_iso(task.get('updatedAt'))
+        source_age_sec = max(0, int((now_dt - task_updated_at).total_seconds())) if task_updated_at else None
+        progress_log = task.get('progress_log') or []
+        output_text = str(task.get('output') or '').strip()
+        is_empty_runtime_trace = not progress_log and not output_text
+        if had_empty_scheduler and state == 'Zhongshu' and source_age_sec is not None and source_age_sec >= export_guard_threshold and is_empty_runtime_trace:
+            sched = task.setdefault('_scheduler', {})
+            if not isinstance(sched, dict):
+                sched = {}
+                task['_scheduler'] = sched
+            sched['enabled'] = sched.get('enabled', True)
+            sched['stallSince'] = None
+            sched['lastDispatchTrigger'] = 'taizi-scan-backend-export-guard'
+            sched['lastDispatchStatus'] = 'suppressed-backend-export-empty-scheduler'
+            reason = f'旧态重复派发保护：state=Zhongshu _scheduler空 source_age={source_age_sec}s progress/output空 sourceLayer={source_layer or "<missing>"}'
+            sched['lastDispatchError'] = reason
+            _scheduler_add_flow(task, f'停滞{source_age_sec}秒，但任务仍呈现旧态空轨迹（Zhongshu + 空调度 + 无progress/output），跳过自动重试', to=task.get('org', ''))
+            changed = True
+            continue
+
         sched = _ensure_scheduler(task)
         task_threshold = int(sched.get('stallThresholdSec') or threshold_sec)
         last_progress = _parse_iso(sched.get('lastProgressAt') or task.get('updatedAt'))
@@ -2468,6 +2514,8 @@ def handle_scheduler_scan(threshold_sec=600):
             changed = True
             continue
 
+        last_dispatch_at = _parse_iso(sched.get('lastDispatchAt') or sched.get('lastRetryAt'))
+        recent_dispatch_sec = max(0, int((now_dt - last_dispatch_at).total_seconds())) if last_dispatch_at else None
         if retry_count < max_retry:
             sched['retryCount'] = retry_count + 1
             sched['lastRetryAt'] = now_iso()
@@ -2565,13 +2613,6 @@ def _startup_collect_recoverable_dispatches(tasks):
         if sched.get('lastDispatchStatus') != 'queued':
             continue
         queued_agent = str(sched.get('lastDispatchAgent') or '').strip()
-        if queued_agent == 'shangshu':
-            log.warning(f'⚠️ 启动恢复跳过: {task_id} queued->shangshu 命中 main-session guard，避免重启后再次灌入 shangshu main')
-            sched['lastDispatchStatus'] = 'suppressed-main-session-guard'
-            sched['lastDispatchTrigger'] = 'startup-recovery'
-            sched['lastDispatchError'] = 'startup recovery suppressed: shangshu main session guard'
-            task['updatedAt'] = now_iso()
-            continue
         log.info(f'🔄 启动恢复: {task_id} 状态={state} 上次派发未完成，准备重新派发')
         sched['lastDispatchTrigger'] = 'startup-recovery'
         task['updatedAt'] = now_iso()
@@ -3254,7 +3295,7 @@ def get_task_activity(task_id):
         'taskMeta': task_meta,
         'agentId': agent_id,
         'agentLabel': _STATE_LABELS.get(state, state),
-        'lastActive': updated_at[:19].replace('T', ' ') if updated_at else None,
+        'lastActive': (_parse_iso(updated_at).astimezone().strftime("%Y-%m-%d %H:%M:%S") if _parse_iso(updated_at) else (updated_at[:19].replace("T", " ") if updated_at else None)),
         'activity': activity,
         'activitySource': 'progress+session',
         'relatedAgents': sorted(list(related_agents)),
@@ -3311,16 +3352,6 @@ def dispatch_for_state(task_id, task, new_state, trigger='state-transition'):
         }),
         _scheduler_add_flow(t, f'已入队派发：{new_state} → {agent_id}（{trigger}）', to=_STATE_LABELS.get(new_state, new_state))
     ))
-    if agent_id in ('taizi', 'shangshu'):
-        log.warning(f'⚠️ {task_id} 自动派发跳过: {agent_id} main 会话保护已生效，避免与 gateway 主会话重入冲突')
-        _update_task_scheduler(task_id, lambda t, s: s.update({
-            'lastDispatchAt': now_iso(),
-            'lastDispatchStatus': 'suppressed-main-session-guard',
-            'lastDispatchAgent': agent_id,
-            'lastDispatchTrigger': trigger,
-            'lastDispatchError': f'{agent_id} main 会话保护：dashboard 不再直接唤醒/派发 {agent_id} main',
-        }))
-        return
     if agent_id == 'menxia' and _task_has_menxia_verdict(task):
         log.warning(f'⚠️ {task_id} 自动派发跳过: 门下省重复送审保护已生效，避免重复进入 menxia main')
         _suppress_menxia_repeat_review(task_id, trigger=trigger)
@@ -3407,9 +3438,24 @@ def dispatch_for_state(task_id, task, new_state, trigger='state-transition'):
                     _scheduler_add_flow(t, f'派发异常：OpenClaw CLI 未找到（{trigger}）', to=t.get('org', ''))
                 ))
                 return
-            cmd = [openclaw_bin, 'agent', '--agent', agent_id, '-m', msg, '--timeout', '300']
+            # 使用 gateway call + sessionKey 实现 session 隔离，避免与 main session 冲突
+            import uuid as _uuid
+            _session_key = f'agent:{agent_id}:edict-dispatch'
+            _idempotency_key = f'edict-{task_id}-{_uuid.uuid4().hex[:8]}'
+            _params = {
+                'message': msg,
+                'agentId': agent_id,
+                'sessionKey': _session_key,
+                'idempotencyKey': _idempotency_key,
+            }
             if _channel:
-                cmd.extend(['--deliver', '--channel', _channel])
+                _params['channel'] = _channel
+            cmd = [
+                openclaw_bin, 'gateway', 'call', 'agent',
+                '--params', json.dumps(_params, ensure_ascii=False),
+                '--timeout', '310000',
+                '--json',
+            ]
             max_retries = 2
             err = ''
             for attempt in range(1, max_retries + 1):
@@ -3758,8 +3804,16 @@ class Handler(BaseHTTPRequestHandler):
         elif p == '/api/jidipu-panel':
             q = urlparse(self.path).query
             m_limit = re.search(r'(?:^|&)limit=(\d+)', q or '')
+            m_task_id = re.search(r'(?:^|&)task_id=([^&]+)', q or '')
             limit = int(m_limit.group(1)) if m_limit else 12
-            self.send_json(get_jidipu_panel(limit=limit))
+            task_id = m_task_id.group(1) if m_task_id else None
+            if task_id:
+                try:
+                    from urllib.parse import unquote_plus
+                    task_id = unquote_plus(task_id)
+                except Exception:
+                    pass
+            self.send_json(get_jidipu_panel(limit=limit, task_id=task_id))
         elif p == '/api/guoshiguan-panel':
             q = urlparse(self.path).query
             m_limit = re.search(r'(?:^|&)limit=(\d+)', q or '')

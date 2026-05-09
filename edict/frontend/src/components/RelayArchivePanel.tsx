@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api, type GuoshiguanPanelItem, type JidipuPanelItem } from '../api';
 import { useStore, timeAgo } from '../store';
+import { formatDashboardDateTime } from '../time';
 
 const JIDIPU_KIND_META: Record<string, { icon: string; cls: string; label: string }> = {
   dispatch: { icon: '📮', cls: 'dispatch', label: '派发' },
@@ -23,7 +24,7 @@ function sourceLabel(sourceType: string) {
 
 function renderUpdatedAt(value?: string) {
   if (!value) return '待补时间';
-  return `${value} · ${timeAgo(value)}`;
+  return `${formatDashboardDateTime(value, { showSeconds: true })} · ${timeAgo(value)}`;
 }
 
 function CitationTrail({ item }: { item: GuoshiguanPanelItem }) {
@@ -55,12 +56,13 @@ export default function RelayArchivePanel() {
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState('');
   const [draftQuery, setDraftQuery] = useState('');
+  const [jidipuTaskFilter, setJidipuTaskFilter] = useState('');
 
   const load = async (nextQuery = query) => {
     setLoading(true);
     try {
       const [jidipuData, guoshiData] = await Promise.all([
-        api.jidipuPanel(18),
+        api.jidipuPanel(18, jidipuTaskFilter || undefined),
         api.guoshiguanPanel(nextQuery, 18),
       ]);
       setJidipu(jidipuData);
@@ -75,11 +77,20 @@ export default function RelayArchivePanel() {
 
   useEffect(() => {
     load();
-  }, []);
+  }, [jidipuTaskFilter]);
 
   const jidipuItems = useMemo(() => (Array.isArray(jidipu?.items) ? jidipu.items : []), [jidipu]);
   const guoshiItems = useMemo(() => (Array.isArray(guoshi?.items) ? guoshi.items : []), [guoshi]);
   const highlights = useMemo(() => (Array.isArray(guoshi?.highlights) ? guoshi.highlights : []), [guoshi]);
+
+  // Extract unique task IDs from jidipu for filter dropdown
+  const jidipuTaskIds = useMemo(() => {
+    const ids = new Set<string>();
+    (Array.isArray(jidipu?.items) ? jidipu.items : []).forEach((item: JidipuPanelItem) => {
+      if (item.taskId) ids.add(item.taskId);
+    });
+    return [...ids].sort();
+  }, [jidipu]);
 
   const handleSearch = () => {
     const next = draftQuery.trim();
@@ -98,6 +109,19 @@ export default function RelayArchivePanel() {
             </div>
             <div className="governance-actions">
               <span className="chip">总条目 {jidipu?.stats?.total || 0}</span>
+              {jidipuTaskIds.length > 1 && (
+                <select
+                  className="archive-search-input"
+                  style={{ maxWidth: 160, padding: '4px 8px', fontSize: 11 }}
+                  value={jidipuTaskFilter}
+                  onChange={(e) => setJidipuTaskFilter(e.target.value)}
+                >
+                  <option value="">全部任务</option>
+                  {jidipuTaskIds.map((tid) => (
+                    <option key={tid} value={tid}>{tid}</option>
+                  ))}
+                </select>
+              )}
               <button className="btn-refresh" onClick={() => load()} disabled={loading}>
                 {loading ? '刷新中…' : '刷新'}
               </button>
