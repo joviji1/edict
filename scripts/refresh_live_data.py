@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, pathlib, datetime, logging
+import json, pathlib, datetime, logging, os
 from file_lock import atomic_json_write, atomic_json_read
 from utils import read_json
 
@@ -7,7 +7,10 @@ log = logging.getLogger('refresh')
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(message)s', datefmt='%H:%M:%S')
 
 BASE = pathlib.Path(__file__).parent.parent
-DATA = BASE / 'data'
+DATA = pathlib.Path(os.environ.get('EDICT_DATA_DIR', str(BASE / 'data'))).resolve()
+RUNTIME_FILE = DATA / 'tasks_runtime_view.json'
+SAMPLES_FILE = DATA / 'tasks_governance_samples.json'
+ARCHIVE_FILE = DATA / 'tasks_jjc_archive.json'
 
 
 def output_meta(path):
@@ -24,10 +27,26 @@ def main():
     officials = officials_data.get('officials', []) if isinstance(officials_data, dict) else officials_data
     # 任务源优先：tasks_source.json（可对接外部系统同步写入）
     tasks = atomic_json_read(DATA / 'tasks_source.json', [])
+    tasks_file_exists = (DATA / 'tasks_source.json').exists()
     if not tasks:
         tasks = read_json(DATA / 'tasks.json', [])
 
     sync_status = read_json(DATA / 'sync_status.json', {})
+    runtime_tasks = atomic_json_read(RUNTIME_FILE, [])
+    governance_samples = atomic_json_read(SAMPLES_FILE, [])
+    jjc_archive = atomic_json_read(ARCHIVE_FILE, [])
+    export_meta = read_json(DATA / 'tasks_backend_export_meta.json', {})
+
+    has_backend_export_tasks = isinstance(tasks, list) and any(
+        isinstance(task, dict) and str(task.get('sourceLayer') or '').strip() == 'backend_export'
+        for task in tasks
+    )
+    if has_backend_export_tasks and isinstance(export_meta, dict) and export_meta.get('taskSource'):
+        task_source = export_meta.get('taskSource')
+        task_source_meta = export_meta
+    else:
+        task_source = 'tasks_source.json' if tasks_file_exists else 'tasks.json'
+        task_source_meta = {}
 
     org_map = {}
     for o in officials:
@@ -95,7 +114,13 @@ def main():
 
     payload = {
         'generatedAt': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'taskSource': 'tasks_source.json' if (DATA / 'tasks_source.json').exists() else 'tasks.json',
+        'taskSource': task_source,
+        'taskSourceMeta': task_source_meta,
+        'taskLayers': {
+            'runtimeCount': len(runtime_tasks) if isinstance(runtime_tasks, list) else 0,
+            'governanceSampleCount': len(governance_samples) if isinstance(governance_samples, list) else 0,
+            'jjcArchiveCount': len(jjc_archive) if isinstance(jjc_archive, list) else 0,
+        },
         'officials': officials,
         'tasks': tasks,
         'history': history,

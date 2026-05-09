@@ -106,9 +106,9 @@ class OrchestratorWorker:
     async def _run_autopsy(self, task_id: str, stall_reason: str):
         cmd = [
             sys.executable,
-            "scripts/kanban_update.py",
-            "autopsy",
+            "scripts/autopsy_draft.py",
             task_id,
+            "--reason",
             stall_reason,
         ]
         return subprocess.run(cmd, capture_output=True, text=True, cwd="/root/.openclaw/workspace/edict")

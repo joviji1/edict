@@ -1,40 +1,35 @@
-import asyncio
-import os
-import pathlib
-import sys
-import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
 
-ROOT = pathlib.Path('/root/.openclaw/workspace/edict')
-sys.path.insert(0, str(ROOT))
-
-# 测试前注入隔离环境，避免连接真实 PG/Redis
-_TMPDIR = tempfile.TemporaryDirectory()
-os.environ['DATABASE_URL'] = f"sqlite+aiosqlite:///{pathlib.Path(_TMPDIR.name) / 'test.db'}"
-os.environ['EDICT_HOME'] = _TMPDIR.name
-
-from edict.backend.app.db import engine, Base  # noqa: E402
-from edict.backend.app.models.task import Task, TaskState  # noqa: E402
-from edict.backend.app.services.task_service import TaskService  # noqa: E402
-from edict.backend.app.workers.orchestrator_worker import (  # noqa: E402
-    MAX_ESCALATION_LEVEL,
-    MAX_STALL_RETRIES,
-    OrchestratorWorker,
-)
+from tests.backend_test_env import bootstrap_backend_test_env
 
 
 class OrchestratorStalledRecoveryTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.drop_all)
-            await conn.run_sync(Base.metadata.create_all)
+        env = bootstrap_backend_test_env('test-orchestrator-stalled.db')
+        self._tmpdir = env['tmpdir']
+        self.Base = env['Base']
+        self.engine = env['engine']
+        self.async_session = env['async_session']
+        self.TaskState = env['TaskState']
+        self.TaskService = env['TaskService']
+        self.orchestrator_worker_module = env['orchestrator_worker_module']
+        self.MAX_ESCALATION_LEVEL = env['orchestrator_worker_module'].MAX_ESCALATION_LEVEL
+        self.MAX_STALL_RETRIES = env['orchestrator_worker_module'].MAX_STALL_RETRIES
+        self.OrchestratorWorker = env['orchestrator_worker_module'].OrchestratorWorker
 
-    async def _create_task(self, state=TaskState.Doing, assignee_org='兵部'):
-        from edict.backend.app.db import async_session
+        async with self.engine.begin() as conn:
+            await conn.run_sync(self.Base.metadata.drop_all)
+            await conn.run_sync(self.Base.metadata.create_all)
 
-        async with async_session() as session:
-            svc = TaskService(session)
+    async def asyncTearDown(self):
+        await self.engine.dispose()
+        self._tmpdir.cleanup()
+
+    async def _create_task(self, state=None, assignee_org='兵部'):
+        state = state or self.TaskState.Doing
+        async with self.async_session() as session:
+            svc = self.TaskService(session)
             task = await svc.create_task(
                 title='stalled recovery test',
                 description='simulate stalled task',
@@ -45,16 +40,14 @@ class OrchestratorStalledRecoveryTest(unittest.IsolatedAsyncioTestCase):
             return str(task.task_id), task.trace_id
 
     async def _load_task(self, task_id):
-        from edict.backend.app.db import async_session
-
-        async with async_session() as session:
-            svc = TaskService(session)
+        async with self.async_session() as session:
+            svc = self.TaskService(session)
             task = await svc.get_task(task_id)
             return task.to_dict()
 
     async def test_retry_updates_scheduler_and_requeues_dispatch(self):
-        task_id, trace_id = await self._create_task(state=TaskState.Doing, assignee_org='兵部')
-        worker = OrchestratorWorker()
+        task_id, trace_id = await self._create_task(state=self.TaskState.Doing, assignee_org='兵部')
+        worker = self.OrchestratorWorker()
         worker.bus = AsyncMock()
 
         payload = {
@@ -83,15 +76,15 @@ class OrchestratorStalledRecoveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs['payload']['stall_count'], 1)
 
     async def test_escalation_persists_state_and_dispatches_supervisor(self):
-        task_id, trace_id = await self._create_task(state=TaskState.Doing, assignee_org='兵部')
-        worker = OrchestratorWorker()
+        task_id, trace_id = await self._create_task(state=self.TaskState.Doing, assignee_org='兵部')
+        worker = self.OrchestratorWorker()
         worker.bus = AsyncMock()
 
         payload = {
             'task_id': task_id,
             'state': 'Doing',
             'assignee_org': '兵部',
-            'stall_count': MAX_STALL_RETRIES,
+            'stall_count': self.MAX_STALL_RETRIES,
             'escalation_level': 0,
             'last_updated': '2026-04-17T00:00:00+00:00',
         }
@@ -101,7 +94,7 @@ class OrchestratorStalledRecoveryTest(unittest.IsolatedAsyncioTestCase):
         sched = task['scheduler']
         self.assertEqual(task['state'], 'Assigned')
         self.assertEqual(task['org'], '尚书省')
-        self.assertEqual(sched.get('retryCount'), MAX_STALL_RETRIES)
+        self.assertEqual(sched.get('retryCount'), self.MAX_STALL_RETRIES)
         self.assertEqual(sched.get('escalationLevel'), 1)
         self.assertEqual(sched.get('stallReason'), 'no_heartbeat')
         self.assertEqual(sched.get('lastEscalatedFrom'), 'Doing')
@@ -116,21 +109,21 @@ class OrchestratorStalledRecoveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second['payload']['agent'], 'shangshu')
 
     async def test_blocked_generates_autopsy_and_marks_task_blocked(self):
-        task_id, trace_id = await self._create_task(state=TaskState.Taizi, assignee_org='兵部')
-        worker = OrchestratorWorker()
+        task_id, trace_id = await self._create_task(state=self.TaskState.Taizi, assignee_org='兵部')
+        worker = self.OrchestratorWorker()
         worker.bus = AsyncMock()
 
         with patch('edict.backend.app.workers.orchestrator_worker.subprocess.run') as mock_run:
             mock_run.return_value.returncode = 0
-            mock_run.return_value.stdout = 'ok'
+            mock_run.return_value.stdout = '{"mode":"bypass-draft","mutated_task_source":false}'
             mock_run.return_value.stderr = ''
 
             payload = {
                 'task_id': task_id,
                 'state': 'Taizi',
                 'assignee_org': '兵部',
-                'stall_count': MAX_STALL_RETRIES,
-                'escalation_level': MAX_ESCALATION_LEVEL,
+                'stall_count': self.MAX_STALL_RETRIES,
+                'escalation_level': self.MAX_ESCALATION_LEVEL,
                 'last_updated': '2026-04-17T00:00:00+00:00',
                 'stall_reason': 'provider_timeout',
             }
@@ -139,16 +132,19 @@ class OrchestratorStalledRecoveryTest(unittest.IsolatedAsyncioTestCase):
         task = await self._load_task(task_id)
         sched = task['scheduler']
         self.assertEqual(task['state'], 'Blocked')
-        self.assertEqual(sched.get('retryCount'), MAX_STALL_RETRIES)
-        self.assertEqual(sched.get('escalationLevel'), MAX_ESCALATION_LEVEL)
+        self.assertEqual(sched.get('retryCount'), self.MAX_STALL_RETRIES)
+        self.assertEqual(sched.get('escalationLevel'), self.MAX_ESCALATION_LEVEL)
         self.assertEqual(sched.get('stallReason'), 'provider_timeout')
         self.assertIn('人工介入', task['block'])
         self.assertIn('停滞阻塞', task['flow_log'][-1]['reason'])
         self.assertEqual(worker.bus.publish.await_count, 0)
         mock_run.assert_called_once()
         cmd = mock_run.call_args.args[0]
-        self.assertIn('autopsy', cmd)
+        self.assertTrue(any(part.endswith('autopsy_draft.py') for part in cmd))
+        self.assertFalse(any(part.endswith('kanban_update.py') for part in cmd))
+        self.assertNotIn('autopsy', cmd)
         self.assertIn(task_id, cmd)
+        self.assertIn('--reason', cmd)
         self.assertIn('provider_timeout', cmd)
 
 
