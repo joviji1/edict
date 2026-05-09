@@ -1,8 +1,10 @@
 # 三省六部治理升级映射总表
 
+> 快速接手先看：`docs/current-progress-board.md`。
 > 适用任务：`JJC-20260416-001`
 > 
 > 目标：把“三省六部治理升级”从审稿稿压成可执行索引表，明确 **改哪里、为什么改、谁负责、怎么验收、优先级是什么**。
+> 本文件保留治理映射全表；`current-progress-board.md` 负责持续跟进板与最新阻塞摘要。
 
 ---
 
@@ -24,7 +26,7 @@
 | 前台唯一入口（太子） | 阿爪治理 | `agents/taizi/`、消息入口链路 | 已有基础 | 固化“前台只接旨/回奏，不绕过台账”规则 | 太子 / 中书省 | P0 | 任意新任务都生成 task_id，并可追溯 flow |
 | 中书完整性 gate | tiangong prompt stack | `agents/GLOBAL.md`、`agents/zhongshu/SOUL.md` | 已写入结构化规则 | 固化目标/边界/验收/SLA/责任部门/风险/回报格式 | 中书省 | P0 | 任意方案稿缺字段即不能进入门下 |
 | 门下审核 gate | 三省制度 | `agents/menxia/SOUL.md`、`agents/groups/sansheng.md` | 已写入统一模板 | 固化 pass/reject/needs_info/split_required/risk_high 与整改条件 | 门下省 | P0 | 所有审核结论可归类并带整改/重审条件 |
-| 尚书派发 gate | 三省制度 | `agents/shangshu/SOUL.md`、`agents/groups/sansheng.md` | 已写入 owner/ETA/证据规则 | 固化 owner / ETA / 验收证据 / 升级路径 | 尚书省 | P0 | P0 任务无“无主项” |
+| 尚书派发 gate | 三省制度 | `agents/shangshu/SOUL.md`、`agents/groups/sansheng.md`、`dashboard/server.py`、`edict/frontend/src/components/TaskModal.tsx` | owner/ETA/证据规则 + 显式派部入口已落地 | 固化 owner / ETA / 验收证据 / 升级路径，并允许在看板内直接显式派到六部 | 尚书省 | P0 | P0 任务无“无主项”，且 `Assigned/Next/Doing` 可显式落到真实六部 |
 | 六层上下文收口 | tiangong context stack | `agents/GLOBAL.md`、各 SOUL | 部分存在 | 统一要求输出：结论、证据、下一步、是否需升级/验尸 | 中书省 / 门下省 | P0 | 任一关键节点输出可直接审计 |
 | stalled 检测与自动重试 | edict 现有机制 | `edict/backend/app/workers/orchestrator_worker.py`、`dashboard/server.py` | 已有基础 | 保持现有重试/升级链，补原因分类和闭环 | 兵部 | P0 | 超时任务会触发 retry / escalation / blocked |
 | stalled 分类 | tiangong 治理经验 | `orchestrator_worker.py`、`kanban_update.py autopsy`、`dashboard/server.py` | P0 已落地基础分类 | 保持 `no_heartbeat / dispatch_failed / provider_timeout / tool_error / permission_denied / waiting_dependency / loop_risk / unknown` 等分类并继续细化 | 兵部 / 刑部 | P0 | 任意 blocked/stalled 都有明确分类或 unknown 强制验尸 |
@@ -138,12 +140,17 @@ P2 当前判断：**全部后置**。P2 依赖 P1 的 stalled/autopsy 可观测�
 
 | 项目 | 状态 | 说明 |
 |---|---|---|
-| 正式审稿稿 | 已完成 | `deliverables/JJC-20260416-001-sansheng-governance-executable-review.md` |
-| 分工推进稿 | 已完成 | `deliverables/JJC-20260416-001-task-division-plan.txt` |
-| 治理升级映射总表 | 已完成 | 本文件 |
+| 正式审稿稿 | 已完成并重建 | 现已补落盘到 `docs/JJC-20260416-001-sansheng-governance-executable-review.md`；原先 `deliverables/...` 路径不存在，已回正为当前真实路径 |
+| 分工推进稿 | 已完成并重建 | 现已补落盘到 `docs/JJC-20260416-001-task-division-plan.txt`；原先 `deliverables/...` 路径不存在，已回正为当前真实路径 |
+| 治理升级映射总表 | 已完成 | 本文件 `docs/governance-upgrade-map.md` |
 | doctor 脚本 | 本轮补齐 | `scripts/doctor_edict.sh` |
 | memory backup 脚本 | 本轮补齐 | `scripts/memory_backup.sh` |
 | safe update 脚本 | P1 增强版已落地 | `scripts/safe_update.sh` 已支持 plan/prepare/test/apply/restart/rollback；restart/rollback 需要显式确认令牌，默认不重启 |
 | worker 完整闭环（分类+autopsy） | P0 已落地，后续持续运行态观察 | `orchestrator_worker.py`、相关测试与真实任务 autopsy 字段已具备；文档口径已同步 |
 | dashboard autopsy 面板 | P0 已落地 | `dashboard/server.py` 与 `dashboard/dashboard.html` 已补 autopsy 读取/生成入口，后续 P1 增强摘要 |
-| gate 结构化执行 | P0 已落地 | GLOBAL/SOUL/groups 已补中书/门下/尚书规则，server 测试覆盖 pendingConfirm/gateChecks |
+| gate 结构化执行 | P0 已落地并补可逆 probe 证据 | 已实测 `PendingConfirm -> approve -> Done`、`PendingConfirm -> reject -> Zhongshu(review_round=1)`；本轮又补修治理样本聚合的 stale 字段残留问题，并清除现场遗留临时 probe 样本 `PROBE-GOV-20260426`，当前 `tasks_source.json` / `live_status.json` 均已不再残留该探针数据 |
+| 自然治理样本厚度 | P1 Phase 1 已起步，继续观察 | 旧问题已确认：截至 2026-04-26 05:04（北京时间）`tasks_source.json` 现场实测仍为 `JJC=32 / OTHER=0 / Done=32`，自然样本为 0；本轮已按专项方案落地第一阶段“三层分离”——`sync_from_openclaw_runtime.py` 改为写 `tasks_runtime_view.json`，新增 `scripts/sync_governance_samples.py` 维护 `tasks_governance_samples.json`，新增 `scripts/rebuild_task_views.py` 聚合 `tasks_source.json`，`refresh_live_data.py` 追加 `taskLayers` 统计，`run_loop.sh/install.sh` 已接入；随后又修复 `sync_governance_samples.py` 在任务已脱离 PendingConfirm 后仍残留旧 `pending_confirm` 的聚合问题，并清除现场遗留临时 probe 样本 `PROBE-GOV-20260426`；最新又补做了一次 scheduler 内部巡检实测：北京时间 2026-04-26 14:44 左右，从上游 `tasks_governance_samples.json` 注入可逆 probe，经 `scripts/rebuild_task_views.py` 聚合后，`edict-dashboard.service` 日志同秒出现 `PROBE-GOV-SCHED-HERMES-20260426T064303Z 新状态 ProbeState 无对应 Agent，跳过自动派发` 与 `🔍 定时巡检：1 个动作`，且样本 `_scheduler.retryCount` 从 `0 -> 1`、`lastDispatchTrigger=taizi-scan-retry`、`flow_log` 追加 `停滞717秒，触发自动重试第1次`；样本随后已清理，无现场残留。另一个关键坑也已坐实：直接往 `tasks_source.json` 注入 probe 会先被 `edict-loop.service` 的 15 秒刷新链覆盖，不能再把这种失败误判为 scheduler 线程失效。最新又修复 runtime 过滤误伤：`should_keep_runtime_task()` 过去会把超过 60 分钟进入 `Next` 的真实 `agent:*:main` 会话直接筛掉，导致连唯一活跃 main session 也可能被误判为“runtime=0”。现已改为保留 24h 窗口内的真实 main session，同时保留 heartbeat 丢弃与飞书噪音过滤规则。现场现状已进一步更新：北京时间 2026-04-26 18:46 左右再次执行 `python3 scripts/guard_openclaw_sessions.py --apply` 后，最新 dry-run 已为 `totalIssues=0`；随后重刷 `sync_officials_stats.py -> sync_from_openclaw_runtime.py -> rebuild_task_views.py -> refresh_live_data.py`，现场三层统计已收口为 `live_status.taskLayers = {runtimeCount: 0, governanceSampleCount: 1, jjcArchiveCount: 32}`，其中 `tasks_runtime_view.json=0`、`tasks_source.json` 也已无 `OC-*` 残留。说明当前 runtime 面已被清干净，后续若要继续做大治理样本，应回到上游自然任务生成与沉淀链路，而不是再纠缠前台 runtime 噪音。 |
+| OpenClaw main session 防爆/自愈 | 本轮补齐 | 已按官方文档把 `/root/.openclaw/openclaw.json` 调整为 `agents.defaults.contextTokens=131072`、更积极的 `compaction/contextPruning/session.reset`；新增 `scripts/guard_openclaw_sessions.py` + `tests/test_guard_openclaw_sessions.py`（`3 passed`），并补上 `missing_transcript_file` 检测与轮转后自动创建空 transcript 占位；历史坏会话 `menxia/shangshu/zhongshu` 已做可逆轮转，最新 `python3 scripts/guard_openclaw_sessions.py` dry-run 为 `totalIssues=0`；已创建 Hermes cron `217551f91436 / openclaw-session-guard` 每 30 分钟自动执行修复脚本。随后用户批准重启，已于北京时间 2026-04-26 16:47 执行 `systemctl --user restart openclaw-gateway`，`openclaw gateway status` 返回 `RPC probe: ok`；重启后对 `agent:zhongshu:main` 做最小实测，真实写回 `contextTokens=131072`、`modelProvider=faker`、`model=gpt-5.4`、`status=done`，证明新参数已在真实 main session 生效。 |
+| template 字段透传样本 | 已补可逆 probe 证据 | 已用临时样本验证 `templateId/templateParams/targetDept` 可在任务数据中保留，probe 后已恢复原始数据 |
+| 尚书显式派部链路 | 本轮补齐产品闭环 | `dashboard/server.py` 新增 `/api/dispatch-task`，`TaskModal` 新增“🎯 显式派给六部”；已实测 build 产物与运行中 bundle 均包含该入口，`Assigned/Next/Doing` 现在可直接落成真实六部执行，不再只靠“推进到下一步”+ `targetDept` 隐式猜路由 |
+| backend host-native 常驻 | **已进入生产 dual/export 过渡态，待最终验收** | 现场新复核显示：`127.0.0.1:18000/health -> {"status":"ok","version":"2.0.0","engine":"edict"}`、`/api/admin/health/deep -> {"status":"ok","checks":{"postgres":true,"redis":true}}` 仍健康；`GET /api/tasks` 现已返回 `count=1`，内容为 backend probe 样本；`data/tasks_backend_export_meta.json` 已存在；`live_status.json.taskSource` 已切到 `backend_api_export`；`edict-dashboard.service` 已注入 `EDICT_TASK_WRITE_MODE=dual`，`edict-loop.service` 已注入 `EDICT_ENABLE_BACKEND_EXPORT=true`。这说明现网已不再是“锁在 JSON 主路”的旧状态，而是 backend 主写/兼容导出并存的过渡态。前台关键写链 smoke 与 systemd 最小回滚演练已在 2026-04-30 现场补齐实操证据，当前剩余尾项主要是继续观察 dual/export 稳定性、自然样本厚度，并完成最终验收判断。 |

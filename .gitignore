@@ -10,9 +10,17 @@ data/tasks.json
 data/bitable_source.json
 data/mission_control_tasks.json
 
-# Logs
+# Local scheduler/runtime state
+.cron_local_state/
+.cron_local_status
+.cron_logs/
+.cron_state/
+
+# Logs and local experiment outputs
 *.log
+/logs/
 /tmp/
+/isolation/
 
 # Environment
 .env
@@ -21,6 +29,7 @@ data/mission_control_tasks.json
 __pycache__/
 *.py[cod]
 .venv/
+.venv-*/
 venv/
 
 # macOS

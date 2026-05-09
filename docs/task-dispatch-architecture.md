@@ -702,7 +702,7 @@ _scheduler = {
 
 #### 调度算法
 
-每 60 秒运行一次 `handle_scheduler_scan(threshold_sec=180)`：
+当前由 dashboard 内部定时线程每 120 秒运行一次 `handle_scheduler_scan(threshold_sec=180)`：
 
 ```
 FOR EACH 任务:

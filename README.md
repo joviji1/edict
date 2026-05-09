@@ -202,7 +202,7 @@ CrewAI 和 AutoGen 的 Agent 协作模式是 **"做完就交"**——没有人�
 
 **⚙️ 模型配置 · Models**
 - 每个 Agent 独立切换 LLM
-- 应用后自动重启 Gateway（~5秒生效）
+- 应用后触发 Gateway 重启（重启链路已有证据；具体生效时延仍以运行态为准）
 
 </td><td>
 
@@ -714,12 +714,16 @@ grep -i "error\|fail\|unknown" /tmp/openclaw/openclaw-*.log | tail -20
    - LLM provider 超时（增加了自动重试）
    - 僵尸 Agent 进程（运行 `ps aux | grep openclaw` 检查）
 
-4. **强制重试**：
-```bash
-# 手动触发巡检扫描（自动重试卡住的任务）
-curl -X POST http://127.0.0.1:7891/api/scheduler-scan \
-  -H 'Content-Type: application/json' -d '{"thresholdSec":60}'
+4. **强制重试 / 巡检说明**：
+```text
+当前默认由 dashboard/server.py 内部定时巡检线程每 120 秒自动调用
+handle_scheduler_scan(threshold_sec=180)。
 ```
+
+如需手动调用 `/api/scheduler-scan`：
+- 该接口当前受 dashboard 认证保护，不再支持裸 `curl` 直打
+- 需先登录并携带 Bearer token / cookie
+- `scripts/run_loop.sh` 也已不再额外调用该接口，避免产生 401 噪音与假动作
 
 </details>
 
