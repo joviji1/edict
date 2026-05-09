@@ -1,0 +1,4 @@
+[Unit]
+Description=edict backend stack target
+Wants=edict-backend-infra.service edict-backend-api.service edict-backend-outbox-relay.service edict-backend-orchestrator.service edict-backend-dispatch.service
+After=edict-backend-infra.service edict-backend-api.service edict-backend-outbox-relay.service edict-backend-orchestrator.service edict-backend-dispatch.service

@@ -1,0 +1,37 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: edict-postgres
+    environment:
+      POSTGRES_DB: ${EDICT_PG_DB:-edict}
+      POSTGRES_USER: ${EDICT_PG_USER:-edict}
+      POSTGRES_PASSWORD: ${EDICT_PG_PASSWORD:?set EDICT_PG_PASSWORD in backend.env}
+    ports:
+      - "127.0.0.1:${EDICT_PG_PORT:-5432}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${EDICT_PG_USER:-edict} -d ${EDICT_PG_DB:-edict}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: edict-redis
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "127.0.0.1:${EDICT_REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+  redis_data:

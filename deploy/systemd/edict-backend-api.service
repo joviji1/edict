@@ -1,0 +1,19 @@
+[Unit]
+Description=edict backend API (FastAPI)
+After=network-online.target edict-backend-infra.service
+Wants=network-online.target edict-backend-infra.service
+PartOf=edict-backend-stack.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/.openclaw/workspace/edict
+EnvironmentFile=-/etc/edict/backend.env
+ExecStart=/usr/bin/bash /root/.openclaw/workspace/edict/scripts/run_backend_component.sh api
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
