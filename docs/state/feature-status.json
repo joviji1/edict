@@ -1,0 +1,127 @@
+{
+  "schema_version": "1.0",
+  "updated_at": "2026-05-09 10:11",
+  "timezone": "Asia/Shanghai",
+  "source_of_truth": [
+    "docs/current-progress-board.md",
+    "docs/closeout.md",
+    "docs/exec-plans/",
+    "docs/plans/"
+  ],
+  "features": [
+    {
+      "feature_id": "EDICT-BACKEND-CUTOVER-001",
+      "title": "backend host-native dual/export 过渡态",
+      "system": "edict",
+      "status": "in_progress",
+      "mainline": true,
+      "real_deliverable": "backend host-native 已进入生产 dual/export 过渡态，并出现真实 backend_api_export 导出证据；本轮又补齐 backend 测试隔离统一入口与一批 Pydantic v2 告警清理，降低了后续主线改动的假稳定风险。",
+      "latest_progress": "2026-05-09 10:01 新鲜运行态快照：五服务 active，health/deep health 正常，backend/tasks_source/live_status 三面均 18 条且 Done=3/Cancelled=15，无非终态任务，doctor PASS=31 WARN=1 FAIL=0。",
+      "evidence_refs": [
+        "docs/current-progress-board.md#0-本轮系统改动速记",
+        "docs/state/verification-ledger.json#VERIF-20260502-1930-BACKEND-TEST-ISOLATION-PYDANTIC",
+        "docs/plans/2026-04-30-systemd-rollback-drill-runbook.md",
+        "docs/plans/2026-04-30-hermes-openclaw-edict-native-harness-adaptation-plan.md",
+        "docs/state/verification-ledger.json#VERIF-20260509-1001-EDICT-RUNTIME-SNAPSHOT"
+      ],
+      "risks": [
+        "自然样本仍薄",
+        "provider 抖动仍会影响阿爪上游体验",
+        "当前主线仍不能宣称全部完成"
+      ],
+      "next_action": "继续补自然业务样本厚度与剩余主线切口；运行态一致性当前保持健康。"
+    },
+    {
+      "feature_id": "OPENCLAW-FEISHU-DM-001",
+      "title": "taizi 飞书直聊链路稳定性",
+      "system": "OpenClaw",
+      "status": "monitoring",
+      "mainline": false,
+      "real_deliverable": "直连 DM 结构性修复、provider/session 去钉死清理已做完，且已重新拿到多轮 received message -> dispatching -> dispatch complete 真实样本。",
+      "latest_progress": "2026-05-02 10:48 已在 hep 上 metapi 禁用耗尽的 gpt-5.4 路由通道 rc_id=12425（account_id=22，balance=0），其余 gpt-5.4 通道仍在路由池中。",
+      "evidence_refs": [
+        "docs/current-progress-board.md#0-本轮系统改动速记",
+        "docs/state/verification-ledger.json#VERIF-20260502-1048-METAPI-GPT54-CHANNEL-DISABLE",
+        "docs/current-progress-board.md#01-补投递入口阶段结论2026-04-29-2114-北京时间"
+      ],
+      "risks": [
+        "gpt-5.4 其余通道仍需继续观察余额与稳定性",
+        "监控脚本尚未接入 cron 定期巡检"
+      ],
+      "next_action": "继续按主板监控口径观察，优先盯 gpt-5.4 剩余通道消耗与飞书直聊真实回复稳定性。"
+    },
+    {
+      "feature_id": "EDICT-HARNESS-GOV-001",
+      "title": "learn-harness-engineering 原生适配治理骨架",
+      "system": "edict/Hermes/OpenClaw",
+      "status": "in_progress",
+      "mainline": true,
+      "real_deliverable": "已落聚焦版适配方案、OpenAI 高级资源包映射、active/completed 计划分层骨架、四份轻量治理专题文档骨架。",
+      "latest_progress": "2026-05-09 10:11 治理样本聚合测试已改为 worktree-relative，并纳入 clean replay P0 与 final behavior；clean replay summary passed，最终 53 passed，frontend audit 仍为 0 vulnerabilities。",
+      "evidence_refs": [
+        "docs/plans/2026-04-30-hermes-openclaw-edict-native-harness-adaptation-plan.md",
+        "docs/exec-plans/README.md",
+        "docs/ARCHITECTURE.md",
+        "docs/RELIABILITY.md",
+        "docs/SECURITY.md",
+        "docs/FRONTEND.md",
+        "docs/current-progress-board.md#0-本轮系统改动速记",
+        "docs/state/verification-ledger.json#VERIF-20260509-0931-EDICT-P4-AUTOPSY-REPLAY",
+        "overlays/edict/upgrade-patches/replay-queue-20260508.md",
+        "overlays/edict/scripts/replay-official-overlay.sh",
+        "docs/state/verification-ledger.json#VERIF-20260509-0946-EDICT-REPLAY-SUMMARY",
+        "overlays/edict/scripts/replay-20260509-094506.summary.json",
+        "docs/state/verification-ledger.json#VERIF-20260509-0957-EDICT-REPLAY-FRONTEND-AUDIT",
+        "overlays/edict/scripts/replay-20260509-095728.summary.json",
+        "overlays/edict/scripts/replay-20260509-095728.log",
+        "docs/state/verification-ledger.json#VERIF-20260509-1003-EDICT-GOV-SAMPLE-PROBE",
+        "docs/state/verification-ledger.json#VERIF-20260509-1011-EDICT-GOV-SAMPLES-REPLAY"
+      ],
+      "risks": [
+        "当前仍主要是治理骨架，不等于体系已完全生效",
+        "真实主线尚未正式迁入 exec-plans/active/ 标准执行稿",
+        "verification-ledger 还需持续写入真实运行态证据",
+        "clean replay 已补前端依赖 audit 门槛；后续仍需持续关注新上游依赖漂移",
+        "自然治理样本仍薄：template/pending_confirm/autopsy/notifications 现网覆盖为 0"
+      ],
+      "next_action": "继续寻找真实低风险入口补自然样本；同时保持 replay 明确覆盖样本聚合链。"
+    },
+    {
+      "feature_id": "EDICT-ATOMIC-TASK-UPDATE-001",
+      "title": "dashboard/server.py 原子任务更新框架扩面",
+      "system": "edict",
+      "status": "in_progress",
+      "mainline": true,
+      "real_deliverable": "已把多个高价值写口迁入 modify_task()/modify_tasks()；backend create 一致性已前推一轮。",
+      "latest_progress": "2026-04-30 02:00 backend create 从 PENDING 升级为真实当日流水号。",
+      "evidence_refs": [
+        "docs/current-progress-board.md#25"
+      ],
+      "risks": [
+        "自然样本仍薄",
+        "handle_scheduler_scan 未迁入"
+      ],
+      "next_action": "继续自然样本积累。"
+    },
+    {
+      "feature_id": "EDICT-GOVERNANCE-DOCS-001",
+      "title": "治理文档体系从骨架升级为实质",
+      "system": "edict",
+      "status": "in_progress",
+      "mainline": true,
+      "real_deliverable": "四份治理文档已填充实质内容。",
+      "latest_progress": "2026-04-30 07:25 四份文档全部完成实质升级。",
+      "evidence_refs": [
+        "docs/ARCHITECTURE.md",
+        "docs/RELIABILITY.md",
+        "docs/SECURITY.md",
+        "docs/FRONTEND.md"
+      ],
+      "risks": [
+        "内容会过时",
+        "状态层文件仍需扩面"
+      ],
+      "next_action": "扩面状态层文件，建立文档交叉引用。"
+    }
+  ]
+}

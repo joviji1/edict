@@ -1,0 +1,102 @@
+JJC-20260416-001 三省六部治理升级分工推进稿
+更新时间：2026-04-28 04:46（北京时间）
+路径：docs/JJC-20260416-001-task-division-plan.txt
+
+一、当前阶段判断
+- 主线已进入“收口阶段”，不是从零开发阶段。
+- 代码、测试、服务、前端主面板已落地。
+- 当前最大的缺口不再是功能缺失，而是：
+  1) backend host-native 生产默认值尚未真正切入
+  2) 部分治理字段自然运行样本仍不足
+  3) 文档口径仍需持续 reality-sync，避免把“代码已半接线”说成“生产已切主链”
+
+二、当前已收口事项
+1. 运行态确认
+- edict-dashboard.service active
+- edict-loop.service active
+- 7892 当前服务的 bundle 已包含：待批专面板 / 急递铺 / 国史馆 / 朝堂议政 / 走势总览 / 能臣 / 需训练 / 显式派给六部
+- backend 健康接口 `127.0.0.1:18000/health`、`/api/admin/health/deep` 正常，但 `/api/tasks` 仍为空；说明 backend 常驻没挂，但生产默认值还没切过去
+
+2. 验证确认
+- py_compile 已过（本轮复核覆盖 `dashboard/server.py`、`dashboard/court_discuss.py`、`scripts/sync_officials_stats.py`、`scripts/export_backend_tasks_to_legacy_json.py`、`scripts/rebuild_task_views.py`、`scripts/sync_governance_samples.py`）
+- 目标回归已实跑通过：`56 passed`
+
+3. 文档纠偏
+- docs/governance-upgrade-map.md 已修正“deliverables 已完成”假账
+- 正式审稿稿 / 分工推进稿已重新落盘到 docs/ 目录
+
+三、建议分工
+A. 中书省
+目标：继续做 reality-sync 总控
+事项：
+- 持续核对 README / ROADMAP / docs 口径与代码/运行态是否一致
+- 避免把“功能存在”误写成“运行样本充足”
+- 统一主线对外说法：产品能力已闭环，运行样本仍待继续补厚
+验收：
+- 关键主文档不再出现明显路径漂移、旧架构口径、假完成记录
+
+B. 门下省
+目标：继续盯治理口径是否说满
+事项：
+- 审核后续文档中关于 PendingConfirm / gate_checks / template 的表述
+- 明确区分：代码闭环 / 测试闭环 / 运行态自然样本
+验收：
+- 对外结论不再出现“拿测试通过替代真实交付”的问题
+
+C. 尚书省
+目标：推进主线剩余证据补齐
+事项：
+- 已完成一轮可逆 probe，后续不再重复拿同类假样本冒充自然结果
+- 下一步重点从上游 runtime 追：为什么当前只有 `zhongshu` 仍有活跃 main session
+- 继续核查其它 agent 是否没有生成 `agent:*:main` 会话，或已掉出 24h runtime 窗口
+- 若后续出现新 main session，再持续观察其是否自然沉淀进 runtime / governance samples 分层
+验收：
+- 至少说清当前 runtime 稀薄到底是过滤问题、前端问题，还是上游真实运行态问题
+
+D. 兵部 / 刑部
+目标：治理链与失败治理继续补强
+事项：
+- 继续观察 blocked / autopsy / stallReason 的真实任务产出
+- 若后续自然运行仍长期无样本，可补更系统的探针与回归测试
+验收：
+- autopsy / timeout / retry / escalation 的运行态证据持续增加
+
+E. 礼部
+目标：看板可见性与交互可审计
+事项：
+- 持续核对待批专面板 / 急递铺 / 国史馆 / 功过簿在运行态中的实际展示
+- 若运行数据不足导致空态，应在文档中明确写“空态是数据现状，不是功能缺失”
+验收：
+- 页面能力、空态说明、截图口径一致
+
+F. 工部
+目标：运维脚本与部署收口
+事项：
+- 维持 doctor / memory_backup / safe_update 可用
+- 后续如涉及配置变更，继续坚持先备份
+验收：
+- 运维脚本可执行、路径稳定、文档可追踪
+
+四、下一步优先级
+P0
+- 按 `docs/plans/2026-04-28-backend-cutover-minimal-rollout.md` 先只开启 loop 侧 `EDICT_ENABLE_BACKEND_EXPORT=true`，验证 backend -> JSON 兼容导出链
+- 保持 **不允许空 backend 覆盖现有 `tasks_source.json`** 的底线
+
+P1
+- 在 backend export 稳定后，再把 dashboard 提到 `EDICT_TASK_WRITE_MODE=dual`
+- 持续补自然运行样本
+- 持续排查 README / ROADMAP / docs 里可能残留的旧口径
+
+P2
+- dashboard dual + export 稳定后，再评估 workspace 默认入口是否切 `EDICT_KANBAN_ENTRY_MODE=auto/api`
+- 更强的实时动画、回放、扩展适配器等增强项继续后置
+
+五、当前不该再重复做的事
+- 不要再把已落地的待批专面板/朝堂议政/功过簿当成“是否存在”的待定项反复争论
+- 不要再把不存在的 deliverables 路径写成已完成
+- 不要拿测试通过直接替代“交付物已存在”或“自然运行样本已充足”
+
+六、当前收口口径
+- 能力层：已闭环
+- 交付层：已开始补齐并回正
+- 运行样本层：仍需继续补厚
