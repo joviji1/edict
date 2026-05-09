@@ -14,12 +14,15 @@ class KanbanAutopsyCLITest(unittest.TestCase):
         self.tmpdir = tempfile.TemporaryDirectory()
         self.base = Path(self.tmpdir.name)
         (self.base / 'data').mkdir(parents=True, exist_ok=True)
-        (self.base / 'scripts').mkdir(parents=True, exist_ok=True)
+        scripts_dir = self.base / 'scripts'
+        scripts_dir.mkdir(parents=True, exist_ok=True)
         (self.base / 'edict' / 'backend' / 'app' / 'models').mkdir(parents=True, exist_ok=True)
         # 让脚本的动态状态机解析有输入
         source_task_py = ROOT / 'edict' / 'backend' / 'app' / 'models' / 'task.py'
         (self.base / 'edict' / 'backend' / 'app' / 'models' / 'task.py').write_text(source_task_py.read_text())
-        refresh = self.base / 'scripts' / 'refresh_live_data.py'
+        (scripts_dir / 'kanban_update_legacy.py').write_text((ROOT / 'scripts' / 'kanban_update_legacy.py').read_text())
+        (scripts_dir / 'file_lock.py').write_text((ROOT / 'scripts' / 'file_lock.py').read_text())
+        refresh = scripts_dir / 'refresh_live_data.py'
         refresh.write_text('print("refresh skipped")\n')
         tasks = [
             {

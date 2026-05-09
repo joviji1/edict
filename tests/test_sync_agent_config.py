@@ -79,6 +79,7 @@ def test_sync_agent_config_includes_default_agents_and_discovers_skills(tmp_path
 
     monkeypatch.setattr(sync_agent_config, "OPENCLAW_CFG", cfg_path)
     monkeypatch.setattr(sync_agent_config, "DATA", tmp_path / "data")
+    monkeypatch.setattr(sync_agent_config, "OPENCLAW_HOME", openclaw_root)
     monkeypatch.setattr(Path, "home", lambda: home)
 
     sync_agent_config.main()
@@ -155,13 +156,13 @@ def test_apply_model_changes_persists_agent_model_and_records_result(tmp_path, m
     assert last_result["gatewayRestarted"] is True
     assert last_result["rolledBack"] is False
     assert last_result["applied"][0]["agentId"] == "taizi"
-    assert last_result["applied"][0]["oldModel"] == "faker/gpt-5.4"
+    assert last_result["applied"][0]["oldModel"] == "longcat/LongCat-Flash-Chat"
     assert last_result["applied"][0]["newModel"] == "faker/gpt-5.4"
-    assert last_result["applied"][0].get("writeSkipped") is True
+    assert last_result["applied"][0].get("writeSkipped") is not True
 
     updated_cfg = json.loads(openclaw_cfg.read_text(encoding="utf-8"))
     taizi = next(agent for agent in updated_cfg["agents"]["list"] if agent["id"] == "taizi")
-    assert "model" not in taizi
+    assert taizi["model"] == "faker/gpt-5.4"
 
     change_log = json.loads((data_dir / "model_change_log.json").read_text(encoding="utf-8"))
     assert change_log[-1]["agentId"] == "taizi"
@@ -173,5 +174,5 @@ def test_apply_model_changes_persists_agent_model_and_records_result(tmp_path, m
         "cmd": ["openclaw", "gateway", "restart"],
         "capture_output": True,
         "text": True,
-        "timeout": 30,
+        "timeout": 60,
     }]

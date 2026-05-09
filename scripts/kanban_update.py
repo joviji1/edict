@@ -104,6 +104,48 @@ _AGENT_LABELS = {
 
 MAX_PROGRESS_LOG = 100  # 单任务最大进展日志条数
 
+AUTOPSY_DIR = _BASE / 'data' / 'autopsy'
+STALL_REASON_LABELS = {
+    'no_heartbeat': '目标 Agent 无心跳',
+    'dispatch_failed': '派发命令失败',
+    'provider_timeout': '模型/API 超时',
+    'tool_error': '工具调用失败',
+    'permission_denied': '权限/状态机拦截',
+    'missing_context': '上下文不足',
+    'waiting_human': '等待人工确认',
+    'dependency_blocked': '外部依赖未满足',
+    'loop_detected': '重复派发/消息循环',
+    'unknown': '未分类',
+}
+
+
+def _infer_stall_reason(task):
+    """从任务 block / scheduler / 日志中推断 stalled 分类。"""
+    sched = task.get('_scheduler') or task.get('scheduler') or {}
+    explicit = sched.get('stallReason') or sched.get('stalledReason') or task.get('stallReason')
+    if explicit:
+        return explicit if explicit in STALL_REASON_LABELS else 'unknown'
+    text = ' '.join(str(x) for x in [
+        task.get('block', ''), task.get('now', ''),
+        *(e.get('remark', '') for e in task.get('flow_log', [])[-5:]),
+        *(e.get('text', '') for e in task.get('progress_log', [])[-5:]),
+    ]).lower()
+    patterns = [
+        ('provider_timeout', ('timeout', 'timed out', '超时', '模型', 'provider', 'api')),
+        ('dispatch_failed', ('dispatch failed', '派发失败', '无法派发', 'subagent')),
+        ('permission_denied', ('permission', 'denied', '越权', '无权', '权限')),
+        ('tool_error', ('tool error', '工具', 'exception', 'traceback', '报错')),
+        ('missing_context', ('missing context', '上下文不足', '缺少上下文', '信息不足')),
+        ('waiting_human', ('等待皇上', '等待人工', 'pendingconfirm', '待确认')),
+        ('dependency_blocked', ('dependency', '依赖', '外部依赖')),
+        ('loop_detected', ('loop', '重复派发', '消息循环')),
+        ('no_heartbeat', ('heartbeat', '无心跳', '心跳')),
+    ]
+    for reason, keys in patterns:
+        if any(k in text for k in keys):
+            return reason
+    return 'unknown'
+
 def load():
     return atomic_json_read(TASKS_FILE, [])
 
@@ -162,7 +204,7 @@ AGENT_POLICY = {
     "taizi":    {"role": "coordination", "commands": {"create", "state", "flow", "progress", "todo", "memory", "task-memo"}},
     "zhongshu": {"role": "coordination", "commands": {"state", "flow", "progress", "todo", "memory", "task-memo", "delegate"}},
     "menxia":   {"role": "coordination", "commands": {"state", "flow", "progress", "todo", "confirm", "memory", "task-memo"}},
-    "shangshu": {"role": "coordination", "commands": {"state", "flow", "progress", "todo", "confirm", "delegate", "memory", "task-memo", "shared-memo"}},
+    "shangshu": {"role": "coordination", "commands": {"state", "flow", "progress", "todo", "confirm", "delegate", "memory", "task-memo", "shared-memo", "autopsy"}},
     "zaochao":  {"role": "coordination", "commands": {"progress", "todo", "memory"}},
     "hubu":     {"role": "execution", "commands": {"progress", "todo", "done", "block", "memory", "task-memo", "delegate-result"}},
     "libu":     {"role": "execution", "commands": {"progress", "todo", "done", "block", "memory", "task-memo", "delegate-result"}},
@@ -936,9 +978,85 @@ def cmd_delegate_result(sub_task_id, result_json):
     log.info(f'✅ 委派结果 {sub_task_id} → 父任务 {parent_id}')
     _append_audit(parent_id, to_agent, 'delegate_result', sub_task_id, None, result_json[:100])
 
+
+def cmd_autopsy(task_id, reason=''):
+    """为失败/阻塞/超时任务生成验尸报告，并回写任务 autopsy 字段。"""
+    AUTOPSY_DIR.mkdir(parents=True, exist_ok=True)
+    report_path_box = ['']
+    reason_box = [reason]
+
+    def modifier(tasks):
+        t = find_task(tasks, task_id)
+        if not t:
+            log.error(f'任务 {task_id} 不存在')
+            return tasks
+        inferred = reason_box[0] or _infer_stall_reason(t)
+        reason_box[0] = inferred
+        sched = t.get('_scheduler') or t.get('scheduler') or {}
+        report_path = AUTOPSY_DIR / f'{task_id}.md'
+        flow_tail = t.get('flow_log', [])[-10:]
+        progress_tail = t.get('progress_log', [])[-10:]
+        lines = [
+            f'# 任务验尸报告：{task_id}',
+            '',
+            f'- 任务标题: {t.get("title", "")}',
+            f'- 当前状态: {t.get("state", "")}',
+            f'- 当前部门: {t.get("org", "")}',
+            f'- 阻塞原因: {t.get("block", "")}',
+            f'- stalled 分类: {inferred}（{STALL_REASON_LABELS.get(inferred, "未分类")}）',
+            f'- 生成时间: {now_iso()}',
+            '',
+            '## 调度器摘要',
+            '',
+            f'- retryCount: {sched.get("retryCount", sched.get("stall_count", 0))}',
+            f'- escalationLevel: {sched.get("escalationLevel", sched.get("escalation_level", 0))}',
+            f'- lastProgressAt: {sched.get("lastProgressAt", sched.get("last_updated", ""))}',
+            '',
+            '## 最近流转记录',
+            '',
+        ]
+        for e in flow_tail:
+            lines.append(f'- {e.get("at", "")} | {e.get("from", "")} → {e.get("to", "")} | {e.get("remark", "")}')
+        lines.extend(['', '## 最近进展记录', ''])
+        for e in progress_tail:
+            lines.append(f'- {e.get("at", "")} | {e.get("agent", e.get("agentLabel", ""))} | {e.get("text", "")}')
+        lines.extend([
+            '',
+            '## 初步结论',
+            '',
+            f'- 根因分类：`{inferred}`。',
+            '- 需要责任部门补充：失败前最后一次有效动作、外部依赖状态、是否需要人工确认。',
+            '- 恢复后必须补一条复盘说明，并将可复用经验写入 memory。',
+        ])
+        report_path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+        t['autopsy'] = {
+            'path': str(report_path),
+            'reason': inferred,
+            'label': STALL_REASON_LABELS.get(inferred, '未分类'),
+            'generatedAt': now_iso(),
+            'source': 'manual' if reason else 'auto-infer',
+        }
+        sched['stallReason'] = inferred
+        sched['autopsyPath'] = str(report_path)
+        sched['autopsyAt'] = now_iso()
+        t['_scheduler'] = sched
+        t.setdefault('flow_log', []).append({
+            'at': now_iso(), 'from': t.get('org', '系统'), 'to': '刑部/尚书省',
+            'remark': f'生成验尸报告：{inferred}', 'autopsyPath': str(report_path),
+        })
+        t['updatedAt'] = now_iso()
+        report_path_box[0] = str(report_path)
+        return tasks
+
+    atomic_json_update(TASKS_FILE, modifier, [])
+    _trigger_refresh()
+    if report_path_box[0]:
+        log.info(f'🧾 {task_id} 验尸报告已生成: {report_path_box[0]}')
+        _append_audit(task_id, _infer_agent_id_from_runtime(), 'autopsy', None, report_path_box[0], reason_box[0])
+
 _CMD_MIN_ARGS = {
     'create': 6, 'state': 3, 'flow': 5, 'done': 2, 'block': 3, 'confirm': 3,
-    'todo': 4, 'progress': 3,
+    'todo': 4, 'progress': 3, 'autopsy': 2,
     'memory': 4, 'task-memo': 4, 'shared-memo': 3,
     'delegate': 5, 'delegate-result': 3,
 }
@@ -1020,6 +1138,8 @@ if __name__ == '__main__':
                      args[5] if len(args) > 5 else '')
     elif cmd == 'delegate-result':
         cmd_delegate_result(args[1], args[2])
+    elif cmd == 'autopsy':
+        cmd_autopsy(args[1], args[2] if len(args) > 2 else '')
     else:
         print(__doc__)
         sys.exit(1)

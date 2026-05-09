@@ -91,7 +91,19 @@ backup_file() {
   local rel="$2"
   if [[ -e "$src" ]]; then
     mkdir -p "$RUN_DIR/$(dirname "$rel")"
-    cp -a "$src" "$RUN_DIR/$rel"
+    if [[ -d "$src" ]]; then
+      # 数据目录可能被运行态 atomic write 留下短生命周期 *.tmp。
+      # 备份快照只需要稳定文件，避免 cp 复制目录过程中源 tmp 被 rename/unlink 后中断整个 prepare。
+      tar \
+        --warning=no-file-changed \
+        --ignore-failed-read \
+        --exclude='*.tmp' \
+        --exclude='*.lock' \
+        -C "$(dirname "$src")" \
+        -cf - "$(basename "$src")" | tar -C "$RUN_DIR/$(dirname "$rel")" -xf -
+    else
+      cp -a "$src" "$RUN_DIR/$rel"
+    fi
     log "已备份: $src -> $RUN_DIR/$rel"
   else
     log "跳过备份，路径不存在: $src"

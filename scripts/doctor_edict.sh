@@ -6,6 +6,7 @@ OC_HOME="${HOME}/.openclaw"
 OC_CFG="${OC_HOME}/openclaw.json"
 DASHBOARD_HOST="${EDICT_DASHBOARD_HOST:-127.0.0.1}"
 DASHBOARD_PORT="${EDICT_DASHBOARD_PORT:-7892}"
+GUARD_SCRIPT="${EDICT_OPENCLAW_FEISHU_P2P_GUARD_SCRIPT:-/root/.openclaw/scripts/check_openclaw_feishu_p2p_guard.py}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 PASS=0
@@ -103,6 +104,66 @@ check_systemd() {
   fi
 }
 
+check_openclaw_feishu_guard() {
+  local script="$1"
+  if [[ ! -f "$script" ]]; then
+    report fail "OpenClaw Feishu P2P 守卫脚本缺失: $script"
+    return
+  fi
+
+  local payload=""
+  if ! payload="$(python3 "$script" 2>&1)"; then
+    report fail "OpenClaw Feishu P2P 守卫执行失败: $script"
+    echo "$payload"
+    return
+  fi
+
+  local summary=""
+  summary="$(python3 - "$payload" <<'PY'
+import json, sys
+
+raw = sys.argv[1]
+try:
+    payload = json.loads(raw)
+except Exception as exc:
+    print(f"invalid_json|detail={exc}")
+    raise SystemExit(0)
+
+events = payload.get('events') or {}
+service_start = payload.get('service_start_raw') or 'unknown'
+bad = len(events.get('bad_since_service_start') or [])
+good = len(events.get('good_since_service_start') or [])
+auto = len(events.get('auto_since_service_start') or [])
+reasons = ','.join(payload.get('regression_reasons') or []) or '-'
+
+if payload.get('regression'):
+    print(
+        f"regression|service_start={service_start}; bad_since_service_start={bad}; "
+        f"good_since_service_start={good}; auto_since_service_start={auto}; reasons={reasons}"
+    )
+else:
+    print(
+        f"ok|service_start={service_start}; bad_since_service_start={bad}; "
+        f"good_since_service_start={good}; auto_since_service_start={auto}"
+    )
+PY
+)"
+
+  local kind="${summary%%|*}"
+  local detail="${summary#*|}"
+  case "$kind" in
+    ok)
+      report ok "OpenClaw Feishu P2P 守卫正常: $detail"
+      ;;
+    regression)
+      report fail "OpenClaw Feishu P2P 守卫告警: $detail"
+      ;;
+    *)
+      report fail "OpenClaw Feishu P2P 守卫输出异常: $detail"
+      ;;
+  esac
+}
+
 report info "开始巡检 edict / OpenClaw / dashboard 环境"
 report info "REPO_DIR=$REPO_DIR"
 
@@ -136,6 +197,7 @@ check_systemd system edict-loop.service
 check_path "/root/.hermes/logs/gateway.log"
 check_port "$DASHBOARD_PORT"
 check_url "http://${DASHBOARD_HOST}:${DASHBOARD_PORT}/healthz"
+check_openclaw_feishu_guard "$GUARD_SCRIPT"
 
 report info "最近日志提示（如果存在）"
 for f in "/root/.hermes/logs/gateway.log" "$REPO_DIR/logs/server.log" "$REPO_DIR/logs/loop.log"; do

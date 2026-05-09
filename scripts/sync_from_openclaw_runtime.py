@@ -5,7 +5,9 @@ import time
 import datetime
 import traceback
 import logging
+import re
 from file_lock import atomic_json_write, atomic_json_read
+from utils import get_openclaw_home
 
 log = logging.getLogger('sync_runtime')
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(message)s', datefmt='%H:%M:%S')
@@ -14,14 +16,39 @@ BASE = pathlib.Path(__file__).resolve().parent.parent
 DATA = BASE / 'data'
 DATA.mkdir(exist_ok=True)
 SYNC_STATUS = DATA / 'sync_status.json'
-SESSIONS_ROOT = pathlib.Path.home() / '.openclaw' / 'agents'
+SESSIONS_ROOT = get_openclaw_home() / 'agents'
+RUNTIME_VIEW = DATA / 'tasks_runtime_view.json'
+ARCHIVE_FILE = DATA / 'tasks_jjc_archive.json'
+AGGREGATE_FILE = DATA / 'tasks_source.json'
 
 
 def write_status(**kwargs):
     atomic_json_write(SYNC_STATUS, kwargs)
 
 
+def _to_timestamp_ms(value):
+    if value in (None, '', 0):
+        return 0
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return 0
+        try:
+            return int(float(text))
+        except Exception:
+            pass
+        try:
+            dt = datetime.datetime.fromisoformat(text.replace('Z', '+00:00'))
+            return int(dt.timestamp() * 1000)
+        except Exception:
+            return 0
+    return 0
+
+
 def ms_to_str(ts_ms):
+    ts_ms = _to_timestamp_ms(ts_ms)
     if not ts_ms:
         return '-'
     try:
@@ -93,7 +120,7 @@ def load_activity(session_file, limit=12):
                 text = f"Tool '{tool}' returned: {content}"
             else:
                 text = f"Tool '{tool}' finished"
-            rows.append({'at': ts, 'kind': 'tool', 'text': text})
+            rows.append({'at': ts, 'kind': 'tool', 'text': text, 'rawText': content})
 
         elif role == 'assistant':
             text = ''
@@ -110,7 +137,7 @@ def load_activity(session_file, limit=12):
                 summary = text.split('\n')[0]
                 if len(summary) > 200:
                     summary = summary[:200] + '...'
-                rows.append({'at': ts, 'kind': 'assistant', 'text': summary})
+                rows.append({'at': ts, 'kind': 'assistant', 'text': summary, 'rawText': text})
                 
         elif role == 'user':
              # Also show what user asked, can be context relevant
@@ -119,7 +146,7 @@ def load_activity(session_file, limit=12):
                 if c.get('type') == 'text':
                      text = c.get('text', '')[:100]
              if text:
-                 rows.append({'at': ts, 'kind': 'user', 'text': f"User: {text}..."})
+                 rows.append({'at': ts, 'kind': 'user', 'text': f"User: {text}...", 'rawText': text})
 
         if len(rows) >= limit:
             break
@@ -128,9 +155,64 @@ def load_activity(session_file, limit=12):
     return rows
 
 
+def extract_task_id_from_activity(activity):
+    if not isinstance(activity, list):
+        return ''
+    patterns = [
+        re.compile(r'任务ID[:：]\s*([0-9a-fA-F-]{36})'),
+        re.compile(r'\b([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\b'),
+    ]
+    for item in activity:
+        text = str(item.get('rawText') or item.get('text') or '')
+        for pattern in patterns:
+            m = pattern.search(text)
+            if m:
+                return m.group(1)
+    return ''
+
+
+def infer_governance_state_from_activity(activity):
+    if not isinstance(activity, list):
+        return '', ''
+    transition_re = re.compile(r'状态更新[:：]\s*([A-Za-z]+)\s*[→\-]+\s*([A-Za-z]+)')
+    state_org_map = {
+        'Taizi': '太子',
+        'Zhongshu': '中书省',
+        'Menxia': '门下省',
+        'Assigned': '尚书省',
+        'Review': '尚书省',
+        'PendingConfirm': '尚书省',
+        'Doing': '执行中',
+        'Next': '尚书省',
+        'Done': '完成',
+        'Blocked': '阻塞',
+    }
+    text_rules = [
+        ('中书省', ('已在中书省', '转交中书省', '中书省起草', 'Zhongshu')),
+        ('门下省', ('已在门下省', '转交门下省', '门下省审议', 'Menxia')),
+        ('尚书省', ('已在尚书省', '转交尚书省', '尚书省派发', 'Assigned')),
+    ]
+    for item in activity:
+        text = str(item.get('rawText') or item.get('text') or '')
+        m = transition_re.search(text)
+        if m:
+            state = m.group(2)
+            return state, state_org_map.get(state, '')
+        for org, needles in text_rules:
+            if any(needle in text for needle in needles):
+                if org == '中书省':
+                    return 'Zhongshu', org
+                if org == '门下省':
+                    return 'Menxia', org
+                if org == '尚书省':
+                    return 'Assigned', org
+    return '', ''
+
+
 def build_task(agent_id, session_key, row, now_ms):
     session_id = row.get('sessionId') or session_key
-    updated_at = row.get('updatedAt') or 0
+    updated_at_raw = row.get('updatedAt')
+    updated_at = _to_timestamp_ms(updated_at_raw)
     age_ms = max(0, now_ms - updated_at) if updated_at else 99 * 24 * 3600 * 1000
     aborted = bool(row.get('abortedLastRun'))
     state = state_from_session(age_ms, aborted)
@@ -141,7 +223,13 @@ def build_task(agent_id, session_key, row, now_ms):
     
     # 尝试从 activity 获取更有意义的当前状态描述
     latest_act = '等待指令'
-    acts = load_activity(session_file, limit=5)
+    acts = load_activity(session_file, limit=12)
+    linked_task_id = extract_task_id_from_activity(acts) if ':edict-dispatch' in session_key else ''
+    bridged_state, bridged_org = infer_governance_state_from_activity(acts) if ':edict-dispatch' in session_key else ('', '')
+    if bridged_state:
+        state = bridged_state
+    if bridged_org:
+        org = bridged_org
     
     # If the absolute latest is a tool result, look for the preceding assistant thought
     # because that explains *why* the tool was called.
@@ -167,13 +255,16 @@ def build_task(agent_id, session_key, row, now_ms):
         title = f"{org}定时任务"
     elif re.match(r'agent:\w+:subagent:', title_label):
         title = f"{org}子任务"
+    elif title_label == 'heartbeat' and session_key.endswith(':main'):
+        title = f"{org}会话"
     elif title_label == session_key or len(title_label) > 40:
         title = f"{org}会话"
     else:
         title = f"{title_label}"
+    runtime_task_id = linked_task_id or f"OC-{agent_id}-{str(session_id)[:8]}"
     
     return {
-        'id': f"OC-{agent_id}-{str(session_id)[:8]}",
+        'id': runtime_task_id,
         'title': title,
         'official': official,
         'org': org,
@@ -188,11 +279,12 @@ def build_task(agent_id, session_key, row, now_ms):
             'dispatch': f"sessionKey={session_key}",
         },
         'ac': '来自 OpenClaw runtime sessions 的实时映射',
-        'activity': load_activity(session_file, limit=10),
+        'activity': acts,
         'sourceMeta': {
             'agentId': agent_id,
             'sessionKey': session_key,
             'sessionId': session_id,
+            'taskId': linked_task_id,
             'updatedAt': updated_at,
             'ageMs': age_ms,
             'systemSent': bool(row.get('systemSent')),
@@ -209,22 +301,49 @@ def should_keep_runtime_task(task, now_ms):
     if str(task.get('id', '')).startswith('JJC'):
         return True
 
-    updated = task.get('sourceMeta', {}).get('updatedAt', 0)
+    source_meta = task.get('sourceMeta') or {}
+    updated = _to_timestamp_ms(source_meta.get('updatedAt', 0))
     title = task.get('title', '')
     state = task.get('state')
-    session_key = (task.get('sourceMeta') or {}).get('sessionKey', '')
+    session_key = source_meta.get('sessionKey', '')
     one_day_ago = now_ms - 24 * 3600 * 1000
 
     # 1. 排除太旧的 (超过24小时)
     if updated < one_day_ago:
         return False
 
+    # edict dispatch 会话是治理链实时面板，不应因为已推进到 Zhongshu / Menxia / Assigned 就被误删。
+    if ':edict-dispatch' in session_key:
+        activity = task.get('activity') or []
+        has_real_signal = bool(source_meta.get('taskId')) or bool(activity)
+        if not has_real_signal:
+            return False
+        return bool(source_meta.get('taskId')) or state in ('Taizi', 'Zhongshu', 'Menxia', 'Assigned', 'Review', 'PendingConfirm', 'Doing', 'Blocked')
+
     # 2. 排除纯后台 cron / subagent 任务，除非它们正在报错
     if '定时任务' in title or '子任务' in title:
         return state == 'Blocked'
 
-    # 3. 排除心跳会话，但保留真实官方 main 会话；普通飞书群/私聊会话仅在报错时展示
+    # 3. 优先保留真实官方 main 会话；但过滤掉坏指针/引导噪音。
     title_lower = str(title).strip().lower()
+    if session_key.endswith(':main'):
+        output_path = str(task.get('output') or '').strip()
+        if output_path and not pathlib.Path(output_path).exists():
+            return False
+        activity = task.get('activity') or []
+        if not activity:
+            return False
+        latest = activity[0]
+        latest_text = str(latest.get('text') or '').strip().upper()
+        if latest.get('kind') == 'assistant' and latest_text in {'OK', 'HEARTBEAT_OK'}:
+            assistant_texts = [
+                str(item.get('text') or '').strip().upper()
+                for item in activity
+                if item.get('kind') == 'assistant'
+            ]
+            if assistant_texts and all(text in {'OK', 'HEARTBEAT_OK'} for text in assistant_texts) and len(activity) <= 3:
+                return False
+        return True
     if title_lower == 'heartbeat':
         return False
     if ':feishu:group:' in session_key or ':feishu:direct:' in session_key:
@@ -286,7 +405,7 @@ def main():
             except Exception:
                 pass
 
-        tasks.sort(key=lambda x: x.get('sourceMeta', {}).get('updatedAt', 0), reverse=True)
+        tasks.sort(key=lambda x: _to_timestamp_ms(x.get('sourceMeta', {}).get('updatedAt', 0)), reverse=True)
 
         # 去重（同一 id 只保留第一个=最新的）
         seen_ids = set()
@@ -300,24 +419,31 @@ def main():
         # ── 过滤掉非 JJC 且非活跃的系统会话，防止看板噪音 ──
         # 保留：24 小时内的真实活跃/异常 runtime 会话；排除：heartbeat、静默 cron/subagent、非报错的普通群聊/私聊映射。
         tasks = [t for t in tasks if should_keep_runtime_task(t, now_ms)]
-        
-        # ── 保留已有的 JJC-* 旨意任务（不覆盖皇上下旨记录）──
-        # JJC 任务的 now 字段由 Agent 自己通过 kanban_update.py progress 命令主动上报，
-        # 不再从会话日志中被动抓取。这里只做合并，不做 activity 映射。
-        existing_tasks_file = DATA / 'tasks_source.json'
+
+        # runtime 层单独落盘，避免与 JJC 历史台账混写。
+        atomic_json_write(RUNTIME_VIEW, tasks)
+
+        # 迁移期兼容：把现有 tasks_source.json 中的 JJC 任务沉淀到 archive，
+        # 由后续 rebuild_task_views.py 再聚合成前端兼容视图。
+        existing_tasks_file = AGGREGATE_FILE
+        existing_archive = atomic_json_read(ARCHIVE_FILE, [])
+        archive_map = {
+            str(item.get('id', '')): item
+            for item in existing_archive
+            if isinstance(item, dict) and str(item.get('id', '')).startswith('JJC')
+        }
         if existing_tasks_file.exists():
             try:
                 existing = json.loads(existing_tasks_file.read_text())
-                jjc_existing = [t for t in existing if str(t.get('id', '')).startswith('JJC')]
-                
-                # 去掉 tasks 里已有的 JJC（以防重复），再把旨意放到最前面
-                tasks = [t for t in tasks if not str(t.get('id', '')).startswith('JJC')]
-                tasks = jjc_existing + tasks
+                for task in existing:
+                    task_id = str(task.get('id', ''))
+                    if task_id.startswith('JJC'):
+                        archive_map[task_id] = task
             except Exception as e:
                 log.error(f'merge existing JJC tasks failed: {e}')
-                pass
-
-        atomic_json_write(DATA / 'tasks_source.json', tasks)
+        archive = list(archive_map.values())
+        archive.sort(key=lambda x: x.get('updatedAt') or x.get('createdAt') or '', reverse=True)
+        atomic_json_write(ARCHIVE_FILE, archive)
 
         duration_ms = int((time.time() - start) * 1000)
         write_status(

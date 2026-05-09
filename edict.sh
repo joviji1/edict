@@ -18,6 +18,7 @@ LOOP_LOG="$LOGDIR/loop.log"
 # 可通过环境变量覆盖的配置
 DASHBOARD_HOST="${EDICT_DASHBOARD_HOST:-127.0.0.1}"
 DASHBOARD_PORT="${EDICT_DASHBOARD_PORT:-7892}"
+PYTHON_BIN="${EDICT_PYTHON:-python3}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 
@@ -73,8 +74,8 @@ _get_pid() {
 do_start() {
   _ensure_dirs
 
-  if ! command -v python3 &>/dev/null; then
-    echo -e "${RED}❌ 未找到 python3，请先安装 Python 3.9+${NC}"
+  if ! command -v "$PYTHON_BIN" &>/dev/null; then
+    echo -e "${RED}❌ 未找到 Python 解释器: $PYTHON_BIN${NC}"
     exit 1
   fi
 
@@ -111,7 +112,7 @@ do_start() {
 
   if ! _is_running "$SERVER_PIDFILE"; then
     echo -e "${GREEN}▶ 启动看板服务器...${NC}"
-    nohup python3 "$REPO_DIR/dashboard/server.py" \
+    nohup "$PYTHON_BIN" "$REPO_DIR/dashboard/server.py" \
       --host "$DASHBOARD_HOST" --port "$DASHBOARD_PORT" \
       >> "$SERVER_LOG" 2>&1 &
     echo $! > "$SERVER_PIDFILE"
@@ -183,7 +184,7 @@ do_status() {
   echo ""
   if _is_running "$SERVER_PIDFILE"; then
     local health
-    if health=$(python3 -c "
+    if health=$("$PYTHON_BIN" -c "
 import urllib.request, json
 try:
     r = urllib.request.urlopen('http://${DASHBOARD_HOST}:${DASHBOARD_PORT}/healthz', timeout=3)

@@ -9,11 +9,12 @@ cd "$REPO_DIR"
 
 DASHBOARD_HOST="${EDICT_DASHBOARD_HOST:-127.0.0.1}"
 DASHBOARD_PORT="${EDICT_DASHBOARD_PORT:-7892}"
+PYTHON_BIN="${EDICT_PYTHON:-python3}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 
-if ! command -v python3 &>/dev/null; then
-  echo -e "${RED}❌ 未找到 python3，请先安装 Python 3.9+${NC}"
+if ! command -v "$PYTHON_BIN" &>/dev/null; then
+  echo -e "${RED}❌ 未找到 Python 解释器: $PYTHON_BIN${NC}"
   exit 1
 fi
 
@@ -67,7 +68,7 @@ else
 fi
 
 echo -e "${GREEN}▶ 启动看板服务器...${NC}"
-python3 dashboard/server.py --host "$DASHBOARD_HOST" --port "$DASHBOARD_PORT" &
+"$PYTHON_BIN" dashboard/server.py --host "$DASHBOARD_HOST" --port "$DASHBOARD_PORT" &
 SERVER_PID=$!
 
 sleep 1

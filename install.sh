@@ -5,7 +5,8 @@
 set -e
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OC_HOME="$HOME/.openclaw"
+PYTHON_BIN="${EDICT_PYTHON:-python3}"
+OC_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
 OC_CFG="$OC_HOME/openclaw.json"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
@@ -34,11 +35,11 @@ check_deps() {
   fi
   log "OpenClaw CLI: $(openclaw --version 2>/dev/null || echo 'OK')"
 
-  if ! command -v python3 &>/dev/null; then
-    error "未找到 python3"
+  if ! command -v "$PYTHON_BIN" &>/dev/null; then
+    error "未找到 Python 解释器: $PYTHON_BIN"
     exit 1
   fi
-  log "Python3: $(python3 --version)"
+  log "Python: $($PYTHON_BIN --version)"
 
   if [ ! -f "$OC_CFG" ]; then
     error "未找到 openclaw.json。请先运行 openclaw 完成初始化。"
@@ -128,10 +129,11 @@ register_agents() {
   cp "$OC_CFG" "$OC_CFG.bak.sansheng-$(date +%Y%m%d-%H%M%S)"
   log "已备份配置: $OC_CFG.bak.*"
 
-  python3 << 'PYEOF'
-import json, pathlib, sys
+  "$PYTHON_BIN" << 'PYEOF'
+import json, os as _os, pathlib, sys
 
-cfg_path = pathlib.Path.home() / '.openclaw' / 'openclaw.json'
+oc_home = pathlib.Path(_os.environ.get('OPENCLAW_HOME', str(pathlib.Path.home() / '.openclaw'))).expanduser()
+cfg_path = oc_home / 'openclaw.json'
 cfg = json.loads(cfg_path.read_text())
 
 AGENTS = [
@@ -155,7 +157,7 @@ existing_ids = {a['id'] for a in agents_list}
 added = 0
 for ag in AGENTS:
     ag_id = ag['id']
-    ws = str(pathlib.Path.home() / f'.openclaw/workspace-{ag_id}')
+    ws = str(oc_home / f'workspace-{ag_id}')
     if ag_id not in existing_ids:
         entry = {'id': ag_id, 'workspace': ws, **{k:v for k,v in ag.items() if k!='id'}}
         agents_list.append(entry)
@@ -201,7 +203,7 @@ init_data() {
 
   # 初始任务文件
   if [ ! -f "$REPO_DIR/data/tasks_source.json" ]; then
-    python3 << 'PYEOF'
+    "$PYTHON_BIN" << 'PYEOF'
 import json, pathlib
 tasks = [
     {
@@ -340,7 +342,7 @@ sync_auth() {
   fi
 
   # 检查文件内容是否有效（非空 JSON）
-  if ! python3 -c "import json; d=json.load(open('$MAIN_AUTH')); assert d" 2>/dev/null; then
+  if ! "$PYTHON_BIN" -c "import json; d=json.load(open('$MAIN_AUTH')); assert d" 2>/dev/null; then
     warn "$AUTH_FILENAME 为空或无效，请先配置 API Key:"
     echo "    openclaw agents add taizi"
     return
@@ -390,9 +392,18 @@ first_sync() {
   info "执行首次数据同步..."
   cd "$REPO_DIR"
   
-  REPO_DIR="$REPO_DIR" python3 scripts/sync_agent_config.py || warn "sync_agent_config 有警告"
-  python3 scripts/sync_officials_stats.py || warn "sync_officials_stats 有警告"
-  python3 scripts/refresh_live_data.py || warn "refresh_live_data 有警告"
+  REPO_DIR="$REPO_DIR" "$PYTHON_BIN" scripts/sync_agent_config.py || warn "sync_agent_config 有警告"
+  "$PYTHON_BIN" scripts/guard_openclaw_sessions.py || warn "guard_openclaw_sessions 有警告"
+  "$PYTHON_BIN" scripts/sync_from_openclaw_runtime.py || warn "sync_from_openclaw_runtime 有警告"
+  "$PYTHON_BIN" scripts/sync_governance_samples.py || warn "sync_governance_samples 有警告"
+  "$PYTHON_BIN" scripts/rebuild_task_views.py || warn "rebuild_task_views 有警告"
+  if [[ "${EDICT_ENABLE_BACKEND_EXPORT:-}" =~ ^(1|true|yes|on)$ ]]; then
+    "$PYTHON_BIN" scripts/export_backend_tasks_to_legacy_json.py || warn "export_backend_tasks_to_legacy_json 有警告"
+  else
+    info "backend export 默认关闭；如需启用请设置 EDICT_ENABLE_BACKEND_EXPORT=true"
+  fi
+  "$PYTHON_BIN" scripts/sync_officials_stats.py || warn "sync_officials_stats 有警告"
+  "$PYTHON_BIN" scripts/refresh_live_data.py || warn "refresh_live_data 有警告"
   
   log "首次同步完成"
 }
