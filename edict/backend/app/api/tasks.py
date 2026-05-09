@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_db
@@ -49,6 +49,12 @@ class TaskSchedulerUpdate(BaseModel):
     scheduler: dict
 
 
+class TaskReviewAction(BaseModel):
+    action: str
+    comment: str = ""
+    agent: str = "menxia"
+
+
 class TaskOut(BaseModel):
     task_id: str
     trace_id: str
@@ -66,8 +72,7 @@ class TaskOut(BaseModel):
     created_at: str
     updated_at: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ── 依赖注入 helper ──
@@ -186,6 +191,26 @@ async def dispatch_task(
         return {"message": "dispatch requested", "agent": agent}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/{task_id}/review-action")
+async def review_action(
+    task_id: uuid.UUID,
+    body: TaskReviewAction,
+    svc: TaskService = Depends(get_task_service),
+):
+    try:
+        task = await svc.review_action(task_id, action=body.action, comment=body.comment, agent=body.agent)
+        data = task.to_dict()
+        return {
+            "ok": True,
+            "task_id": str(task.task_id),
+            "state": data["state"],
+            "review_round": data.get("review_round", 0),
+            "message": f'{data["id"]} {"已准奏" if body.action == "approve" else "已封驳"}',
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/{task_id}/progress")

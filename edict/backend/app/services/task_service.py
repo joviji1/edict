@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.outbox import OutboxEvent
 from ..models.task import Task, TaskState, STATE_TRANSITIONS, TERMINAL_STATES
+from .notification_service import send_pending_confirm_notification, send_review_result_notification
 from .event_bus import (
     TOPIC_TASK_CREATED,
     TOPIC_TASK_STATUS,
@@ -46,6 +47,17 @@ class TaskService:
         self.db = db
         # event_bus 保留用于 request_dispatch 等直接发布场景
         self.bus = event_bus
+
+    @staticmethod
+    def _summarize_text(text: str, limit: int = 240) -> str:
+        """压缩多行文本为适合 progress_log / now 的短摘要。"""
+        normalized = "\n".join(line.strip() for line in str(text or "").splitlines() if line.strip())
+        if not normalized:
+            return ""
+        normalized = normalized.replace("\n", " / ")
+        if len(normalized) <= limit:
+            return normalized
+        return normalized[: limit - 1].rstrip() + "…"
 
     # ── 创建 ──
 
@@ -124,6 +136,7 @@ class TaskService:
         new_state: TaskState,
         agent: str = "system",
         reason: str = "",
+        skip_high_risk_gate: bool = False,
     ) -> Task:
         """执行状态流转。SELECT FOR UPDATE 防止并发 flow_log 丢失。"""
         # 行级排他锁 — 串行化同一任务的并发写入
@@ -145,14 +158,16 @@ class TaskService:
 
         now = datetime.now(timezone.utc)
         meta = copy.deepcopy(task.meta or {})
+        requested_target_state = (meta.get("pending_confirm") or {}).get("target_state")
         target_state = new_state
 
-        if (old_state, new_state) in _HIGH_RISK_TRANSITIONS:
+        if not skip_high_risk_gate and (old_state, new_state) in _HIGH_RISK_TRANSITIONS:
             task.state = TaskState.PendingConfirm
             task.org = Task.org_for_state(TaskState.PendingConfirm, task.assignee_org)
             task.now = reason or f"待确认: {old_state.value}→{new_state.value}"
             meta["pending_confirm"] = {
                 "target_state": new_state.value,
+                "source_state": old_state.value,
                 "requested_by": agent,
                 "requested_at": now.isoformat(),
                 "confirm_by": _CONFIRM_AUTHORITY.get(old_state, "shangshu"),
@@ -181,15 +196,17 @@ class TaskService:
             if old_state == TaskState.PendingConfirm:
                 pending = meta.get("pending_confirm") or {}
                 gate_checks = list(meta.get("gate_checks") or [])
+                gate_from = gate_checks[-1].get("from") if gate_checks else pending.get("source_state", "PendingConfirm")
+                gate_to = pending.get("target_state") or requested_target_state or new_state.value
                 gate_checks.append(
                     {
                         "at": now.isoformat(),
                         "gate": "high_risk_transition",
-                        "from": old_state.value,
-                        "to": new_state.value,
+                        "from": gate_from,
+                        "to": gate_to,
                         "confirm_by": pending.get("confirm_by"),
                         "risk_key": pending.get("risk_key"),
-                        "result": "approved" if new_state == target_state else "rejected",
+                        "result": "approved" if (requested_target_state and new_state.value == requested_target_state) else "rejected",
                     }
                 )
                 meta["gate_checks"] = gate_checks
@@ -243,7 +260,103 @@ class TaskService:
         self.db.add(outbox)
 
         await self.db.commit()
+        if effective_new_state == TaskState.PendingConfirm:
+            if send_pending_confirm_notification(task, source_state=old_state.value, target_state=target_state.value):
+                meta = copy.deepcopy(task.meta or {})
+                notifications = dict(meta.get("notifications") or {})
+                notifications["pending_confirm_sent"] = True
+                notifications["pending_confirm_sent_at"] = datetime.now(timezone.utc).isoformat()
+                meta["notifications"] = notifications
+                task.meta = meta
+                task.updated_at = datetime.now(timezone.utc)
+                await self.db.commit()
+        elif old_state == TaskState.PendingConfirm:
+            action = "approve" if (requested_target_state and effective_new_state.value == requested_target_state) else "reject"
+            if send_review_result_notification(task, action=action, comment=reason):
+                meta = copy.deepcopy(task.meta or {})
+                notifications = dict(meta.get("notifications") or {})
+                notifications["review_result_sent"] = action
+                notifications["review_result_sent_at"] = datetime.now(timezone.utc).isoformat()
+                meta["notifications"] = notifications
+                task.meta = meta
+                task.updated_at = datetime.now(timezone.utc)
+                await self.db.commit()
         log.info(f"Task {task_id} state: {old_state.value} → {effective_new_state.value} by {agent}")
+        return task
+
+    async def review_action(
+        self,
+        task_id: uuid.UUID,
+        action: str,
+        comment: str = "",
+        agent: str = "menxia",
+    ) -> Task:
+        action = str(action or "").strip().lower()
+        if action not in {"approve", "reject"}:
+            raise ValueError(f"Unknown review action: {action}")
+
+        current = await self.get_task(task_id)
+        if current.state not in {TaskState.Review, TaskState.Menxia, TaskState.PendingConfirm}:
+            raise ValueError(f"Task {task_id} current state is {current.state.value}, review not allowed")
+
+        old_state = current.state
+        review_summary = self._summarize_text(comment)
+
+        if action == "approve":
+            if old_state == TaskState.PendingConfirm:
+                pending = (current.meta or {}).get("pending_confirm") or {}
+                target_name = str(pending.get("target_state") or TaskState.Done.value)
+                try:
+                    target_state = TaskState(target_name)
+                except ValueError:
+                    target_state = TaskState.Done
+                task = await self.transition_state(task_id, target_state, agent=agent, reason=comment or "门禁确认通过")
+                if target_state == TaskState.Done:
+                    task.now = "御批通过，任务完成"
+                elif target_state == TaskState.Cancelled:
+                    task.now = "御批同意撤销"
+                else:
+                    task.now = f"御批通过，转入 {target_state.value}"
+            elif old_state == TaskState.Menxia:
+                task = await self.transition_state(task_id, TaskState.Assigned, agent=agent, reason=comment or "门下省审议通过")
+                task.now = "门下省准奏，移交尚书省派发"
+            else:
+                task = await self.transition_state(task_id, TaskState.Done, agent=agent, reason=comment or "审查通过", skip_high_risk_gate=True)
+                task.now = "御批通过，任务完成"
+        else:
+            round_num = int((current.meta or {}).get("review_round") or 0) + 1
+            task = await self.transition_state(task_id, TaskState.Zhongshu, agent=agent, reason=comment or "需要修改")
+            meta = copy.deepcopy(task.meta or {})
+            meta["review_round"] = round_num
+            task.meta = meta
+            task.now = f"封驳退回中书省修订（第{round_num}轮）"
+
+        if review_summary:
+            progress_entry = {
+                "agent": agent,
+                "content": f"review:{action} · {review_summary}",
+                "ts": datetime.now(timezone.utc).isoformat(),
+            }
+            if task.progress_log is None:
+                task.progress_log = []
+            task.progress_log = [*task.progress_log, progress_entry]
+            if action == "approve" and task.state == TaskState.Done:
+                task.output = comment
+
+        task.updated_at = datetime.now(timezone.utc)
+        await self.db.commit()
+
+        if old_state != TaskState.PendingConfirm:
+            if send_review_result_notification(task, action=action, comment=comment):
+                meta = copy.deepcopy(task.meta or {})
+                notifications = dict(meta.get("notifications") or {})
+                notifications["review_result_sent"] = action
+                notifications["review_result_sent_at"] = datetime.now(timezone.utc).isoformat()
+                meta["notifications"] = notifications
+                task.meta = meta
+                task.updated_at = datetime.now(timezone.utc)
+                await self.db.commit()
+
         return task
 
     # ── 派发请求 ──
@@ -256,6 +369,7 @@ class TaskService:
     ):
         """发布 task.dispatch 事件到 outbox，由 OutboxRelay 投递后 DispatchWorker 消费。"""
         task = await self._get_task(task_id)
+        data = task.to_dict()
         outbox = OutboxEvent(
             topic=TOPIC_TASK_DISPATCH,
             trace_id=str(task.trace_id),
@@ -266,6 +380,16 @@ class TaskService:
                 "agent": target_agent,
                 "message": message,
                 "state": task.state.value,
+                "title": data.get("title", ""),
+                "description": data.get("description", ""),
+                "org": data.get("assignee_org") or data.get("org") or "",
+                "priority": data.get("priority", "中"),
+                "tags": data.get("tags", []),
+                "todos": data.get("todos", []),
+                "flow_log": (data.get("flow_log") or [])[-5:],
+                "progress_log": (data.get("progress_log") or [])[-3:],
+                "block": data.get("block", ""),
+                "meta": data.get("meta", {}),
             },
         )
         self.db.add(outbox)
@@ -281,14 +405,18 @@ class TaskService:
         content: str,
     ) -> Task:
         task = await self._get_task(task_id)
+        summary = self._summarize_text(content)
         entry = {
             "agent": agent,
             "content": content,
+            "text": summary,
             "ts": datetime.now(timezone.utc).isoformat(),
         }
         if task.progress_log is None:
             task.progress_log = []
         task.progress_log = [*task.progress_log, entry]
+        if summary:
+            task.now = summary
         task.updated_at = datetime.now(timezone.utc)
         await self.db.commit()
         return task
@@ -312,6 +440,44 @@ class TaskService:
         task = await self._get_task(task_id)
         task.scheduler = scheduler
         task.updated_at = datetime.now(timezone.utc)
+        await self.db.commit()
+        return task
+
+    async def update_assignee_org(
+        self,
+        task_id: uuid.UUID,
+        assignee_org: str,
+        agent: str = "system",
+        reason: str = "",
+    ) -> Task:
+        task = await self._get_task(task_id)
+        now = datetime.now(timezone.utc)
+        old_target = task.assignee_org or task.target_dept or task.org or ""
+        new_target = str(assignee_org or "").strip()
+        if not new_target:
+            raise ValueError("assignee_org is required")
+
+        task.assignee_org = new_target
+        task.target_dept = new_target
+        if task.state in {TaskState.Doing, TaskState.Next}:
+            task.org = Task.org_for_state(task.state, new_target)
+
+        meta = copy.deepcopy(task.meta or {})
+        meta["targetDept"] = new_target
+        task.meta = meta
+        task.updated_at = now
+
+        flow_entry = {
+            "from": old_target or task.org or "",
+            "to": new_target,
+            "agent": agent,
+            "reason": reason or f"改派至{new_target}",
+            "ts": now.isoformat(),
+        }
+        if task.flow_log is None:
+            task.flow_log = []
+        task.flow_log = [*task.flow_log, flow_entry]
+
         await self.db.commit()
         return task
 

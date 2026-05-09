@@ -388,6 +388,25 @@ class DispatchWorker:
         trace_id = event.get("trace_id", "")
         state = payload.get("state", "")
 
+        # 如果 payload 缺少 title 等关键字段，从 DB 补全
+        if task_id and not payload.get("title"):
+            try:
+                from ..db import async_session
+                from ..services.task_service import TaskService
+                async with async_session() as session:
+                    svc = TaskService(session)
+                    task = await svc.get_task(task_id)
+                    if task:
+                        data = task.to_dict()
+                        for key in ("title", "description", "priority", "tags", "todos",
+                                    "flow_log", "progress_log", "block", "meta"):
+                            if not payload.get(key) and data.get(key):
+                                payload[key] = data[key]
+                        if not payload.get("org"):
+                            payload["org"] = data.get("assignee_org") or data.get("org") or ""
+            except Exception as e:
+                log.warning(f"Failed to enrich dispatch payload for {task_id}: {e}")
+
         # 去重：同一任务如果已在派发中，跳过并 ACK
         if task_id in self._inflight:
             log.warning(f"⚡ Skipping duplicate dispatch for task {task_id} (already in-flight)")
@@ -438,8 +457,8 @@ class DispatchWorker:
                     log.warning(f"⚠️ Agent {agent} slowdown: {elapsed:.0f}s (avg: {avg:.0f}s)")
 
                 # Prompt 注入检测
-                stdout = result.get("stdout", "")
-                stdout, injection_warnings = _sanitize_agent_output(stdout, agent)
+                raw_stdout = result.get("stdout", "")
+                sanitized_stdout, injection_warnings = _sanitize_agent_output(raw_stdout, agent)
                 if injection_warnings:
                     for w in injection_warnings:
                         log.warning(f"🛡️ {w}")
@@ -465,11 +484,30 @@ class DispatchWorker:
                     payload={
                         "task_id": task_id,
                         "agent": agent,
-                        "output": stdout,
+                        "output": raw_stdout,
+                        "sanitized_output": sanitized_stdout,
                         "return_code": result.get("returncode", -1),
                         "injection_warnings": injection_warnings or None,
                     },
                 )
+
+                if task_id:
+                    try:
+                        from ..db import async_session
+                        from ..services.task_service import TaskService
+
+                        async with async_session() as session:
+                            svc = TaskService(session)
+                            summary = svc._summarize_text(sanitized_stdout or raw_stdout)
+                            if summary:
+                                await svc.add_progress(task_id, agent, sanitized_stdout or raw_stdout)
+                            if result.get("returncode") == 0 and raw_stdout.strip():
+                                task = await svc.get_task(task_id)
+                                task.output = raw_stdout
+                                task.updated_at = datetime.now(timezone.utc)
+                                await session.commit()
+                    except Exception as persist_err:
+                        log.warning(f"Failed to persist agent output for {task_id}: {persist_err}")
 
                 if result.get("returncode") == 0:
                     log.info(f"✅ Agent '{agent}' completed task {task_id}")
@@ -547,13 +585,23 @@ class DispatchWorker:
         trace_id: str,
         payload: dict | None = None,
     ) -> dict:
-        """异步调用 OpenClaw CLI — 在线程池中执行，带富上下文注入。"""
+        """异步调用 OpenClaw CLI — 使用 gateway call + sessionKey 实现 session 隔离。"""
         settings = get_settings()
+        # 使用 gateway call + sessionKey 实现 session 隔离，避免与 main session 冲突
+        session_key = f"agent:{agent}:edict-dispatch"
+        idempotency_key = f"edict-{task_id}-{uuid.uuid4().hex[:8]}"
+        params = {
+            "message": message,
+            "agentId": agent,
+            "sessionKey": session_key,
+            "idempotencyKey": idempotency_key,
+        }
         cmd = [
             settings.openclaw_bin,
-            "agent",
-            "--agent", agent,
-            "-m", message,
+            "gateway", "call", "agent",
+            "--params", json.dumps(params, ensure_ascii=False),
+            "--timeout", "310000",
+            "--json",
         ]
 
         env = os.environ.copy()

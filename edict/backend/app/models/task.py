@@ -46,8 +46,8 @@ STATE_TRANSITIONS = {
     TaskState.Assigned: {TaskState.Doing, TaskState.Next, TaskState.Cancelled, TaskState.Blocked},
     TaskState.Next: {TaskState.Doing, TaskState.Cancelled, TaskState.Blocked},
     TaskState.Doing: {TaskState.Review, TaskState.Done, TaskState.Blocked, TaskState.Cancelled},
-    TaskState.Review: {TaskState.Done, TaskState.Menxia, TaskState.Doing, TaskState.Cancelled, TaskState.PendingConfirm},
-    TaskState.PendingConfirm: {TaskState.Done, TaskState.Review, TaskState.Cancelled},
+    TaskState.Review: {TaskState.Done, TaskState.Menxia, TaskState.Doing, TaskState.Cancelled, TaskState.PendingConfirm, TaskState.Zhongshu},
+    TaskState.PendingConfirm: {TaskState.Done, TaskState.Review, TaskState.Zhongshu, TaskState.Cancelled},
     TaskState.Blocked: {
         TaskState.Taizi,
         TaskState.Zhongshu,
@@ -164,6 +164,12 @@ class Task(Base):
         pending_confirm = meta.get("pending_confirm")
         gate_checks = meta.get("gate_checks") or []
         memory_extracted = meta.get("memory_extracted") or {}
+        notifications = meta.get("notifications") or {}
+        review_round = int(meta.get("review_round") or 0)
+        meta_template_id = meta.get("templateId") or meta.get("template_id") or ""
+        meta_template_params = meta.get("templateParams") or meta.get("template_params") or {}
+        meta_ac = meta.get("ac") or ""
+        meta_target_dept = meta.get("targetDept") or meta.get("target_dept") or self.assignee_org or ""
 
         return {
             "task_id": task_id,
@@ -191,10 +197,10 @@ class Task(Base):
             "block": self.block,
             "output": legacy_output,
             "archived": self.archived,
-            "templateId": self.template_id,
-            "templateParams": self.template_params or {},
-            "ac": self.ac,
-            "targetDept": self.target_dept,
+            "templateId": self.template_id or meta_template_id,
+            "templateParams": self.template_params or meta_template_params,
+            "ac": self.ac or meta_ac,
+            "targetDept": self.target_dept or meta_target_dept,
             "_scheduler": scheduler,
             "createdAt": self.created_at.isoformat() if self.created_at else "",
             "updatedAt": updated_at,
@@ -204,4 +210,7 @@ class Task(Base):
             "gateChecks": gate_checks,
             "memory_extracted": memory_extracted,
             "memoryExtracted": memory_extracted,
+            "notifications": notifications,
+            "review_round": review_round,
+            "reviewRound": review_round,
         }

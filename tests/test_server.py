@@ -338,7 +338,7 @@ def test_add_remote_skill_success_writes_source_metadata_and_resyncs_agent_confi
     assert source_info['addedAt']
     assert source_info['lastUpdated']
 
-    assert sync_calls[-1] == {'cmd': ['python3', str(srv.SCRIPTS / 'sync_agent_config.py')], 'timeout': 10, 'kwargs': {}}
+    assert sync_calls[-1] == {'cmd': [srv.python_bin(), str(srv.SCRIPTS / 'sync_agent_config.py')], 'timeout': 10, 'kwargs': {}}
 
 
 def test_add_remote_skill_rejects_unknown_agent(tmp_path):
@@ -387,7 +387,7 @@ def test_remove_remote_skill_deletes_workspace_and_resyncs_agent_config(tmp_path
 
     assert result['ok'] is True
     assert not skill_dir.exists()
-    assert sync_calls == [{'cmd': ['python3', str(srv.SCRIPTS / 'sync_agent_config.py')], 'timeout': 10}]
+    assert sync_calls == [{'cmd': [srv.python_bin(), str(srv.SCRIPTS / 'sync_agent_config.py')], 'timeout': 10}]
 
 
 def test_save_tasks_sends_pending_confirm_notification_once(tmp_path, monkeypatch):
@@ -824,6 +824,47 @@ def test_handle_scheduler_scan_retries_stalled_task_and_records_trigger(tmp_path
     assert '停滞' in saved['flow_log'][-1]['remark']
 
 
+def test_handle_scheduler_scan_suppresses_backend_export_empty_scheduler_retry(tmp_path):
+    data_dir = tmp_path / 'data'
+    data_dir.mkdir()
+    (data_dir / 'tasks_source.json').write_text(json.dumps([{
+        'id': 'TEST-SCHED-BACKEND-EXPORT-GUARD-1',
+        'title': 'backend export 空调度保护',
+        'state': 'Zhongshu',
+        'org': '中书省',
+        'sourceLayer': 'backend_export',
+        'updatedAt': '2026-04-17T00:00:00Z',
+        '_scheduler': {},
+    }], ensure_ascii=False), encoding='utf-8')
+
+    import server as srv
+    srv.DATA = data_dir
+    srv._ACTIVE_TASK_DATA_DIR = None
+
+    called = []
+    old_dispatch = srv.dispatch_for_state
+    try:
+        srv.dispatch_for_state = lambda task_id, task, state, trigger='state-transition': called.append({
+            'task_id': task_id,
+            'state': state,
+            'trigger': trigger,
+        })
+        result = srv.handle_scheduler_scan(180)
+        saved = json.loads((data_dir / 'tasks_source.json').read_text(encoding='utf-8'))[0]
+    finally:
+        srv.dispatch_for_state = old_dispatch
+
+    assert result['ok'] is True
+    assert result['count'] == 0
+    assert result['actions'] == []
+    assert called == []
+    assert saved['_scheduler']['lastDispatchTrigger'] == 'taizi-scan-backend-export-guard'
+    assert saved['_scheduler']['lastDispatchStatus'] == 'suppressed-backend-export-empty-scheduler'
+    assert '旧态重复派发保护' in saved['_scheduler']['lastDispatchError']
+    assert 'sourceLayer=backend_export' in saved['_scheduler']['lastDispatchError']
+    assert any('跳过自动重试' in str(item.get('remark', '')) for item in saved.get('flow_log', []))
+
+
 def test_dispatch_for_state_falls_back_to_target_dept_when_org_is_generic(tmp_path, monkeypatch):
     data_dir = tmp_path / 'data'
     data_dir.mkdir()
@@ -874,12 +915,12 @@ def test_dispatch_for_state_falls_back_to_target_dept_when_org_is_generic(tmp_pa
     assert saved['_scheduler']['lastDispatchStatus'] == 'gateway-offline'
 
 
-def test_dispatch_for_state_suppresses_taizi_main_session_auto_dispatch(tmp_path, monkeypatch):
+def test_dispatch_for_state_queues_taizi_with_isolated_session_dispatch(tmp_path, monkeypatch):
     data_dir = tmp_path / 'data'
     data_dir.mkdir()
     (data_dir / 'tasks_source.json').write_text(json.dumps([{
         'id': 'TEST-TAIZI-AUTO-DISPATCH-1',
-        'title': '太子主会话保护',
+        'title': '太子隔离会话派发',
         'state': 'Taizi',
         'org': '太子',
         'updatedAt': '2026-04-17T00:00:00Z',
@@ -911,25 +952,46 @@ def test_dispatch_for_state_suppresses_taizi_main_session_auto_dispatch(tmp_path
     assert not any(args and args[0] and args[0][0] == 'openclaw' for args, kwargs in run_calls)
     assert saved['_scheduler']['lastDispatchAgent'] == 'taizi'
     assert saved['_scheduler']['lastDispatchTrigger'] == 'unit-test'
-    assert saved['_scheduler']['lastDispatchStatus'] == 'suppressed-main-session-guard'
-    assert 'taizi main 会话保护' in saved['_scheduler']['lastDispatchError']
+    assert saved['_scheduler']['lastDispatchStatus'] == 'queued'
 
 
-def test_wake_agent_suppresses_taizi_main_session_wake(monkeypatch):
+def test_wake_agent_uses_isolated_session_for_taizi(monkeypatch):
     import server as srv
 
     monkeypatch.setattr(srv, '_check_agent_workspace', lambda agent_id: True)
     monkeypatch.setattr(srv, '_check_gateway_alive', lambda: True)
+    monkeypatch.setattr(srv, '_resolve_openclaw_bin', lambda: 'openclaw')
+
+    class InlineThread:
+        def __init__(self, target=None, daemon=None):
+            self.target = target
+            self.daemon = daemon
+        def start(self):
+            if self.target:
+                self.target()
+
+    class Completed:
+        returncode = 0
+        stdout = '{}'
+        stderr = ''
 
     run_calls = []
-    monkeypatch.setattr(srv.subprocess, 'run', lambda *args, **kwargs: run_calls.append((args, kwargs)))
+    def fake_run(*args, **kwargs):
+        run_calls.append((args, kwargs))
+        return Completed()
+
+    monkeypatch.setattr(srv.threading, 'Thread', InlineThread)
+    monkeypatch.setattr(srv.subprocess, 'run', fake_run)
 
     result = srv.wake_agent('taizi', 'ping')
 
     assert result['ok'] is True
-    assert '已跳过' in result['message']
-    assert 'main 会话保护' in result['message']
-    assert run_calls == []
+    assert '唤醒指令已发出' in result['message']
+    assert run_calls
+    cmd = run_calls[0][0][0]
+    params = json.loads(cmd[cmd.index('--params') + 1])
+    assert params['sessionKey'] == 'agent:taizi:edict-dispatch'
+    assert params['agentId'] == 'taizi'
 
 
 def test_dispatch_for_state_suppresses_menxia_repeat_review_dispatch(tmp_path, monkeypatch):
@@ -1201,8 +1263,14 @@ def test_handle_dispatch_task_dual_mode_uses_backend_without_local_json(monkeypa
     assert save_calls == []
 
 
-def test_handle_dispatch_task_dual_mode_falls_back_to_legacy_when_backend_fails(monkeypatch):
+def test_handle_dispatch_task_dual_mode_falls_back_to_legacy_when_backend_fails(tmp_path, monkeypatch):
     import server as srv
+
+    data_dir = tmp_path / 'data'
+    data_dir.mkdir()
+    (data_dir / 'tasks_source.json').write_text(json.dumps([{'id': 'TEST-MANUAL-DISPATCH-2', 'state': 'Assigned', 'org': '尚书省'}], ensure_ascii=False), encoding='utf-8')
+    srv.DATA = data_dir
+    srv._ACTIVE_TASK_DATA_DIR = None
 
     monkeypatch.setattr(srv, 'TASK_WRITE_MODE', 'dual', raising=False)
     monkeypatch.setattr(
@@ -1212,9 +1280,7 @@ def test_handle_dispatch_task_dual_mode_falls_back_to_legacy_when_backend_fails(
         raising=False,
     )
 
-    saved = []
     dispatched = []
-    monkeypatch.setattr(srv, 'save_tasks', lambda tasks: saved.append(tasks))
     monkeypatch.setattr(
         srv,
         'dispatch_for_state',
@@ -1225,13 +1291,12 @@ def test_handle_dispatch_task_dual_mode_falls_back_to_legacy_when_backend_fails(
             'task': task,
         }),
     )
-    monkeypatch.setattr(srv, 'load_tasks', lambda: [{'id': 'TEST-MANUAL-DISPATCH-2', 'state': 'Assigned', 'org': '尚书省'}])
-
     result = srv.handle_dispatch_task('TEST-MANUAL-DISPATCH-2', '工部', '改由工部执行')
+    saved_tasks = json.loads((data_dir / 'tasks_source.json').read_text(encoding='utf-8'))
 
     assert result['ok'] is True
-    assert saved and saved[0][0]['state'] == 'Doing'
-    assert saved[0][0]['targetDept'] == '工部'
+    assert saved_tasks[0]['state'] == 'Doing'
+    assert saved_tasks[0]['targetDept'] == '工部'
     assert dispatched and dispatched[0]['task_id'] == 'TEST-MANUAL-DISPATCH-2'
     assert dispatched[0]['trigger'] == 'manual-dispatch'
 
@@ -1263,8 +1328,13 @@ def test_handle_review_action_dual_mode_uses_backend_without_local_json(monkeypa
 
 
 
-def test_handle_review_action_dual_mode_falls_back_to_legacy_when_backend_fails(monkeypatch):
+def test_handle_review_action_dual_mode_falls_back_to_legacy_when_backend_fails(tmp_path, monkeypatch):
     import server as srv
+
+    data_dir = tmp_path / 'data'
+    data_dir.mkdir()
+    srv.DATA = data_dir
+    srv._ACTIVE_TASK_DATA_DIR = None
 
     monkeypatch.setattr(srv, 'TASK_WRITE_MODE', 'dual', raising=False)
     monkeypatch.setattr(
@@ -1274,9 +1344,7 @@ def test_handle_review_action_dual_mode_falls_back_to_legacy_when_backend_fails(
         raising=False,
     )
 
-    saved = []
-    monkeypatch.setattr(srv, 'save_tasks', lambda tasks: saved.append(tasks))
-    monkeypatch.setattr(srv, 'load_tasks', lambda: [{
+    (data_dir / 'tasks_source.json').write_text(json.dumps([{
         'id': 'TEST-REVIEW-DUAL-2',
         'state': 'PendingConfirm',
         'title': '待回退审批',
@@ -1301,13 +1369,14 @@ def test_handle_review_action_dual_mode_falls_back_to_legacy_when_backend_fails(
         }],
         'flow_log': [],
         'updatedAt': '2026-04-17T00:00:00Z',
-    }])
+    }], ensure_ascii=False), encoding='utf-8')
 
     result = srv.handle_review_action('TEST-REVIEW-DUAL-2', 'approve', '准奏')
+    saved_tasks = json.loads((data_dir / 'tasks_source.json').read_text(encoding='utf-8'))
 
     assert result['ok'] is True
-    assert saved and saved[0][0]['state'] == 'Done'
-    assert saved[0][0]['gate_checks'][-1]['result'] == 'approved'
+    assert saved_tasks[0]['state'] == 'Done'
+    assert saved_tasks[0]['gate_checks'][-1]['result'] == 'approved'
 
 
 def test_timeout_summary_route_groups_stalled_tasks(tmp_path):
@@ -1698,11 +1767,12 @@ def test_handle_create_task_dual_mode_uses_real_daily_legacy_id_instead_of_pendi
     monkeypatch.setattr(srv, 'TASK_WRITE_MODE', 'dual', raising=False)
     monkeypatch.setattr(srv, 'load_tasks', lambda: [{'id': 'JJC-20260430-001'}, {'id': 'JJC-20260430-002'}])
 
+    real_datetime = srv.datetime.datetime
+
     class _FakeNow:
         @staticmethod
         def now():
-            import datetime
-            return datetime.datetime(2026, 4, 30, 9, 0, 0)
+            return real_datetime(2026, 4, 30, 9, 0, 0)
 
     monkeypatch.setattr(srv.datetime, 'datetime', _FakeNow, raising=False)
 
@@ -1730,11 +1800,16 @@ def test_handle_create_task_dual_mode_uses_real_daily_legacy_id_instead_of_pendi
     assert 'PENDING' not in backend_calls[0]['legacy_id']
 
 
-def test_handle_create_task_dual_mode_falls_back_to_legacy_when_backend_fails(monkeypatch):
+def test_handle_create_task_dual_mode_falls_back_to_legacy_when_backend_fails(tmp_path, monkeypatch):
     import server as srv
 
+    data_dir = tmp_path / 'data'
+    data_dir.mkdir()
+    (data_dir / 'tasks_source.json').write_text('[]', encoding='utf-8')
+    srv.DATA = data_dir
+    srv._ACTIVE_TASK_DATA_DIR = None
+
     monkeypatch.setattr(srv, 'TASK_WRITE_MODE', 'dual', raising=False)
-    monkeypatch.setattr(srv, 'load_tasks', lambda: [])
     monkeypatch.setattr(
         srv,
         '_create_task_via_backend',
@@ -1742,9 +1817,7 @@ def test_handle_create_task_dual_mode_falls_back_to_legacy_when_backend_fails(mo
         raising=False,
     )
 
-    saved = []
     dispatched = []
-    monkeypatch.setattr(srv, 'save_tasks', lambda tasks: saved.append(tasks))
     monkeypatch.setattr(
         srv,
         'dispatch_for_state',
@@ -1760,8 +1833,9 @@ def test_handle_create_task_dual_mode_falls_back_to_legacy_when_backend_fails(mo
 
     assert result['ok'] is True
     assert result['taskId'].startswith('JJC-')
-    assert saved and saved[0][0]['id'] == result['taskId']
-    assert saved[0][0]['targetDept'] == '工部'
+    saved_tasks = json.loads((data_dir / 'tasks_source.json').read_text(encoding='utf-8'))
+    assert saved_tasks[0]['id'] == result['taskId']
+    assert saved_tasks[0]['targetDept'] == '工部'
     assert dispatched and dispatched[0]['task_id'] == result['taskId']
     assert dispatched[0]['state'] == 'Taizi'
 
@@ -1783,21 +1857,24 @@ def test_update_task_todos_dual_mode_uses_backend_without_local_json(monkeypatch
     assert save_calls == []
 
 
-def test_update_task_todos_dual_mode_falls_back_to_legacy_when_backend_fails(monkeypatch):
+def test_update_task_todos_dual_mode_falls_back_to_legacy_when_backend_fails(tmp_path, monkeypatch):
     import server as srv
+
+    data_dir = tmp_path / 'data'
+    data_dir.mkdir()
+    (data_dir / 'tasks_source.json').write_text(json.dumps([{'id': 'JJC-TODO-001', 'todos': []}], ensure_ascii=False), encoding='utf-8')
+    srv.DATA = data_dir
+    srv._ACTIVE_TASK_DATA_DIR = None
 
     monkeypatch.setattr(srv, 'TASK_WRITE_MODE', 'dual', raising=False)
     monkeypatch.setattr(srv, '_update_task_todos_via_backend', lambda task_id, todos: {'ok': False, 'error': 'backend unavailable'}, raising=False)
 
-    saved = []
-    monkeypatch.setattr(srv, 'save_tasks', lambda tasks: saved.append(tasks))
-    monkeypatch.setattr(srv, 'load_tasks', lambda: [{'id': 'JJC-TODO-001', 'todos': []}])
-
     result = srv.update_task_todos('JJC-TODO-001', [{'id': '1', 'title': '补测试', 'status': 'completed'}])
+    saved_tasks = json.loads((data_dir / 'tasks_source.json').read_text(encoding='utf-8'))
 
     assert result['ok'] is True
-    assert saved and saved[0][0]['todos'][0]['id'] == '1'
-    assert saved[0][0]['todos'][0]['status'] == 'completed'
+    assert saved_tasks[0]['todos'][0]['id'] == '1'
+    assert saved_tasks[0]['todos'][0]['status'] == 'completed'
 
 
 def test_adopt_court_conclusion_writes_todo_and_rule(tmp_path, monkeypatch):
@@ -1922,12 +1999,12 @@ def test_startup_recover_queued_dispatches_repairs_then_dispatches(tmp_path, mon
     assert dispatched[0]['snapshot_status'] == 'queued'
 
 
-def test_startup_recover_queued_dispatches_suppresses_shangshu_without_redispatch(tmp_path, monkeypatch):
+def test_startup_recover_queued_dispatches_keeps_shangshu_queued_without_redispatch(tmp_path, monkeypatch):
     data_dir = tmp_path / 'data'
     data_dir.mkdir()
     task = {
         'id': 'JJC-RECOVER-002',
-        'title': '启动恢复主会话保护测试',
+        'title': '启动恢复尚书队列保持测试',
         'state': 'Assigned',
         'org': '尚书省',
         '_scheduler': {
@@ -1935,20 +2012,3 @@ def test_startup_recover_queued_dispatches_suppresses_shangshu_without_redispatc
             'lastDispatchAgent': 'shangshu',
         }
     }
-    (data_dir / 'tasks_source.json').write_text(json.dumps([task], ensure_ascii=False), encoding='utf-8')
-
-    import server as srv
-    srv.DATA = data_dir
-    srv._ACTIVE_TASK_DATA_DIR = None
-
-    dispatched = []
-    monkeypatch.setattr(srv, 'dispatch_for_state', lambda *args, **kwargs: dispatched.append(args))
-
-    srv._startup_recover_queued_dispatches()
-
-    tasks = json.loads((data_dir / 'tasks_source.json').read_text(encoding='utf-8'))
-    sched = tasks[0]['_scheduler']
-    assert sched['lastDispatchStatus'] == 'suppressed-main-session-guard'
-    assert sched['lastDispatchTrigger'] == 'startup-recovery'
-    assert 'startup recovery suppressed' in sched['lastDispatchError']
-    assert dispatched == []

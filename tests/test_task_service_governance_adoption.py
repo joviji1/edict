@@ -1,31 +1,30 @@
-import os
-import pathlib
-import sys
-import tempfile
 import unittest
 import uuid
 
-ROOT = pathlib.Path('/root/.openclaw/workspace/edict')
-sys.path.insert(0, str(ROOT))
-
-_TMPDIR = tempfile.TemporaryDirectory()
-os.environ['DATABASE_URL'] = f"sqlite+aiosqlite:///{pathlib.Path(_TMPDIR.name) / 'test-adoption.db'}"
-os.environ['EDICT_HOME'] = _TMPDIR.name
-
-from edict.backend.app.db import Base, async_session, engine  # noqa: E402
-from edict.backend.app.models.task import TaskState  # noqa: E402
-from edict.backend.app.services.task_service import TaskService  # noqa: E402
+from tests.backend_test_env import bootstrap_backend_test_env
 
 
 class TaskServiceGovernanceAdoptionTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.drop_all)
-            await conn.run_sync(Base.metadata.create_all)
+        env = bootstrap_backend_test_env('test-adoption.db')
+        self._tmpdir = env['tmpdir']
+        self.Base = env['Base']
+        self.engine = env['engine']
+        self.async_session = env['async_session']
+        self.TaskState = env['TaskState']
+        self.TaskService = env['TaskService']
 
-    async def _create_task(self, *, state: TaskState, assignee_org='工部'):
-        async with async_session() as session:
-            svc = TaskService(session)
+        async with self.engine.begin() as conn:
+            await conn.run_sync(self.Base.metadata.drop_all)
+            await conn.run_sync(self.Base.metadata.create_all)
+
+    async def asyncTearDown(self):
+        await self.engine.dispose()
+        self._tmpdir.cleanup()
+
+    async def _create_task(self, *, state, assignee_org='工部'):
+        async with self.async_session() as session:
+            svc = self.TaskService(session)
             task = await svc.create_task(
                 title='governance adoption test',
                 description='verify legacy governance side effects',
@@ -37,17 +36,17 @@ class TaskServiceGovernanceAdoptionTest(unittest.IsolatedAsyncioTestCase):
             return task.task_id
 
     async def _load_task_dict(self, task_id):
-        async with async_session() as session:
-            svc = TaskService(session)
+        async with self.async_session() as session:
+            svc = self.TaskService(session)
             task = await svc.get_task(task_id)
             return task.to_dict()
 
     async def test_review_done_becomes_pending_confirm_and_exports_gate_fields(self):
-        task_id = await self._create_task(state=TaskState.Review)
+        task_id = await self._create_task(state=self.TaskState.Review)
 
-        async with async_session() as session:
-            svc = TaskService(session)
-            task = await svc.transition_state(task_id, TaskState.Done, agent='shangshu', reason='申请完结')
+        async with self.async_session() as session:
+            svc = self.TaskService(session)
+            task = await svc.transition_state(task_id, self.TaskState.Done, agent='shangshu', reason='申请完结')
             data = task.to_dict()
 
         self.assertEqual(data['state'], 'PendingConfirm')
@@ -59,15 +58,15 @@ class TaskServiceGovernanceAdoptionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data['meta']['gate_checks'][0]['to'], 'Done')
 
     async def test_pending_confirm_approval_clears_pending_and_appends_gate_resolution(self):
-        task_id = await self._create_task(state=TaskState.Review)
+        task_id = await self._create_task(state=self.TaskState.Review)
 
-        async with async_session() as session:
-            svc = TaskService(session)
-            await svc.transition_state(task_id, TaskState.Done, agent='shangshu', reason='申请完结')
+        async with self.async_session() as session:
+            svc = self.TaskService(session)
+            await svc.transition_state(task_id, self.TaskState.Done, agent='shangshu', reason='申请完结')
 
-        async with async_session() as session:
-            svc = TaskService(session)
-            task = await svc.transition_state(task_id, TaskState.Done, agent='menxia', reason='准奏')
+        async with self.async_session() as session:
+            svc = self.TaskService(session)
+            task = await svc.transition_state(task_id, self.TaskState.Done, agent='menxia', reason='准奏')
             data = task.to_dict()
 
         self.assertEqual(data['state'], 'Done')
@@ -79,20 +78,38 @@ class TaskServiceGovernanceAdoptionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data['memoryExtracted']['done']['source'], 'api-transition')
         self.assertNotIn('pending_confirm', data['meta'])
 
-    async def test_terminal_transition_sets_memory_extracted_and_compat_fields(self):
-        task_id = await self._create_task(state=TaskState.Doing)
+    async def test_pending_confirm_reject_returns_to_zhongshu_and_appends_gate_resolution(self):
+        task_id = await self._create_task(state=self.TaskState.Review)
 
-        async with async_session() as session:
-            svc = TaskService(session)
-            task = await svc.transition_state(task_id, TaskState.Cancelled, agent='gongbu', reason='执行中撤销')
+        async with self.async_session() as session:
+            svc = self.TaskService(session)
+            await svc.transition_state(task_id, self.TaskState.Done, agent='shangshu', reason='申请完结')
+
+        async with self.async_session() as session:
+            svc = self.TaskService(session)
+            task = await svc.transition_state(task_id, self.TaskState.Zhongshu, agent='menxia', reason='封驳退回修订')
+            data = task.to_dict()
+
+        self.assertEqual(data['state'], 'Zhongshu')
+        self.assertIsNone(data['pending_confirm'])
+        self.assertEqual(data['gate_checks'][-1]['result'], 'rejected')
+        self.assertEqual(data['gateChecks'][-1]['to'], 'Done')
+        self.assertNotIn('pending_confirm', data['meta'])
+
+    async def test_terminal_transition_sets_memory_extracted_and_compat_fields(self):
+        task_id = await self._create_task(state=self.TaskState.Doing)
+
+        async with self.async_session() as session:
+            svc = self.TaskService(session)
+            task = await svc.transition_state(task_id, self.TaskState.Cancelled, agent='gongbu', reason='执行中撤销')
             data = task.to_dict()
 
         self.assertEqual(data['state'], 'PendingConfirm')
         self.assertEqual(data['pendingConfirm']['risk_key'], 'Doing->Cancelled')
 
-        async with async_session() as session:
-            svc = TaskService(session)
-            task = await svc.transition_state(task_id, TaskState.Cancelled, agent='shangshu', reason='确认撤销')
+        async with self.async_session() as session:
+            svc = self.TaskService(session)
+            task = await svc.transition_state(task_id, self.TaskState.Cancelled, agent='shangshu', reason='确认撤销')
             data = task.to_dict()
 
         self.assertEqual(data['state'], 'Cancelled')

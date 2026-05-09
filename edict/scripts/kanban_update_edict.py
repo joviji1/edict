@@ -20,12 +20,13 @@ import os
 import re
 import sys
 import pathlib
+from typing import Optional
 
 log = logging.getLogger('kanban')
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(message)s', datefmt='%H:%M:%S')
 
 # Edict API 地址 — 环境变量 > 默认 localhost:8000
-EDICT_API_URL = os.environ.get('EDICT_API_URL', 'http://localhost:8000')
+EDICT_API_URL = os.environ.get('EDICT_API_URL', 'http://127.0.0.1:18000')
 
 # 是否启用 API 模式（EDICT_MODE=api | json | auto）
 EDICT_MODE = os.environ.get('EDICT_MODE', 'auto').lower()
@@ -116,12 +117,20 @@ def _api_available() -> bool:
         req = urllib.request.Request(f"{EDICT_API_URL}/health", method='GET')
         req.add_header('Accept', 'application/json')
         with urllib.request.urlopen(req, timeout=2) as resp:
-            return resp.status == 200
+            body = resp.read().decode('utf-8', 'replace')
+            payload = json.loads(body)
+            if not isinstance(payload, dict):
+                return False
+            return (
+                resp.status == 200
+                and payload.get('status') == 'ok'
+                and (payload.get('engine') == 'edict' or 'version' in payload)
+            )
     except Exception:
         return False
 
 
-def _api_post(path: str, data: dict) -> dict | None:
+def _api_post(path: str, data: dict) -> Optional[dict]:
     """向 Edict API 发送 POST 请求。"""
     try:
         import urllib.request
@@ -139,7 +148,7 @@ def _api_post(path: str, data: dict) -> dict | None:
         return None
 
 
-def _api_put(path: str, data: dict) -> dict | None:
+def _api_put(path: str, data: dict) -> Optional[dict]:
     """向 Edict API 发送 PUT 请求。"""
     try:
         import urllib.request
@@ -176,14 +185,22 @@ def _check_api():
 
 def _fallback_json():
     """降级：导入旧版 kanban_update 逻辑。"""
-    # 回退到同目录下的旧版实现
-    old_path = pathlib.Path(__file__).parent / 'kanban_update_legacy.py'
-    if old_path.exists():
-        import importlib.util
-        spec = importlib.util.spec_from_file_location('kanban_legacy', old_path)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod
+    candidates = [
+        pathlib.Path(__file__).resolve().parents[2] / 'scripts' / 'kanban_update_legacy.py',
+        pathlib.Path(__file__).parent / 'kanban_update_legacy.py',
+        pathlib.Path(__file__).resolve().parents[2] / 'scripts' / 'kanban_update.py',
+    ]
+    for old_path in candidates:
+        if old_path.exists():
+            import importlib.util
+            import sys
+            old_dir = str(old_path.parent)
+            if old_dir not in sys.path:
+                sys.path.insert(0, old_dir)
+            spec = importlib.util.spec_from_file_location('kanban_legacy', old_path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
     return None
 
 
@@ -318,17 +335,19 @@ def cmd_progress(task_id, now_text, todos_pipe='', tokens=0, cost=0.0, elapsed=0
     if _check_api():
         agent = _infer_agent_id()
         # 更新进度
-        _api_post(f'/api/tasks/by-legacy/{task_id}/progress', {
+        progress_ok = bool(_api_post(f'/api/tasks/by-legacy/{task_id}/progress', {
             'agent': agent,
             'content': clean,
-        })
+        }))
         # 更新 todos
+        todos_ok = True
         if parsed_todos:
-            _api_put(f'/api/tasks/by-legacy/{task_id}/todos', {
+            todos_ok = bool(_api_put(f'/api/tasks/by-legacy/{task_id}/todos', {
                 'todos': parsed_todos,
-            })
-        log.info(f'📡 {task_id} 进展: {clean[:40]}...')
-        return
+            }))
+        if progress_ok and todos_ok:
+            log.info(f'📡 {task_id} 进展: {clean[:40]}...')
+            return
 
     legacy = _fallback_json()
     if legacy:
@@ -343,12 +362,13 @@ def cmd_todo(task_id, todo_id, title, status='not-started', detail=''):
         # 读取现有 todos，更新后写回
         # 这里简化处理，直接发进度更新
         agent = _infer_agent_id()
-        _api_post(f'/api/tasks/by-legacy/{task_id}/progress', {
+        result = _api_post(f'/api/tasks/by-legacy/{task_id}/progress', {
             'agent': agent,
             'content': f'Todo #{todo_id}: {title} → {status}',
         })
-        log.info(f'✅ {task_id} todo: {todo_id} → {status}')
-        return
+        if result:
+            log.info(f'✅ {task_id} todo: {todo_id} → {status}')
+            return
 
     legacy = _fallback_json()
     if legacy:
@@ -361,17 +381,18 @@ _CMD_MIN_ARGS = {
     'create': 6, 'state': 3, 'flow': 5, 'done': 2, 'block': 3, 'todo': 4, 'progress': 3,
 }
 
-if __name__ == '__main__':
-    args = sys.argv[1:]
+
+def main(argv=None):
+    args = list(sys.argv[1:] if argv is None else argv)
     if not args:
         print(__doc__)
-        sys.exit(0)
+        return 0
 
     cmd = args[0]
     if cmd in _CMD_MIN_ARGS and len(args) < _CMD_MIN_ARGS[cmd]:
         print(f'错误："{cmd}" 命令至少需要 {_CMD_MIN_ARGS[cmd]} 个参数，实际 {len(args)} 个')
         print(__doc__)
-        sys.exit(1)
+        return 1
 
     if cmd == 'create':
         cmd_create(args[1], args[2], args[3], args[4], args[5], args[6] if len(args) > 6 else None)
@@ -422,4 +443,9 @@ if __name__ == '__main__':
         )
     else:
         print(__doc__)
-        sys.exit(1)
+        return 1
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
