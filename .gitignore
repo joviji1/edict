@@ -15,6 +15,12 @@ data/mission_control_tasks.json
 .cron_local_status
 .cron_logs/
 .cron_state/
+.cron_status/
+.cron_local_summary*
+cron_local_state/
+cron_state/
+.local/cron/
+last_script_status.txt
 
 # Logs and local experiment outputs
 *.log
