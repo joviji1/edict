@@ -119,7 +119,7 @@ stage_plan() {
 stage_prepare() {
   stage_plan
   log "步骤 prepare: 备份关键记忆、任务数据、配置、systemd 单元和 git 指针"
-  bash "$REPO_DIR/scripts/memory_backup.sh" "$RUN_DIR/memory" | tee -a "$LOG_FILE"
+  EDICT_MEMORY_BACKUP_SKIP_WORKSPACE=1 bash "$REPO_DIR/scripts/memory_backup.sh" "$RUN_DIR/memory" | tee -a "$LOG_FILE"
   backup_file "$HOME/.openclaw/openclaw.json" "config/openclaw.json"
   backup_file "$REPO_DIR/data" "data"
   backup_file "/etc/systemd/system/edict-dashboard.service" "systemd/edict-dashboard.service"

@@ -17,6 +17,7 @@ data/mission_control_tasks.json
 .cron_state/
 .cron_status/
 .cron_local_summary*
+.cron_script_status.*
 cron_local_state/
 cron_state/
 .local/cron/

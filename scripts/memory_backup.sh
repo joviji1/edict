@@ -50,7 +50,9 @@ copy_if_exists "$HOME/.openclaw/openclaw.json" "$OUT_DIR/openclaw.json"
 
 # 备份 workspace 时不能把备份目录放在 workspace 内，否则 cp 会递归复制自身。
 workspace_src="$HOME/.openclaw/workspace"
-if [[ -d "$workspace_src" ]]; then
+if [[ "${EDICT_MEMORY_BACKUP_SKIP_WORKSPACE:-0}" == "1" ]]; then
+  echo "⚠️  跳过 workspace 整体备份：调用方已设置 EDICT_MEMORY_BACKUP_SKIP_WORKSPACE=1。"
+elif [[ -d "$workspace_src" ]]; then
   case "$OUT_DIR" in
     "$workspace_src"|"$workspace_src"/*)
       echo "⚠️  跳过 workspace 整体备份：输出目录位于 workspace 内，会导致递归复制。"

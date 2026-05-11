@@ -45,6 +45,11 @@ class TaskTransition(BaseModel):
 class TaskProgress(BaseModel):
     agent: str
     content: str
+    tokens: int | float | None = None
+    cost: int | float | None = None
+    model: str | None = None
+    elapsed: int | float | None = None
+    usage: dict | None = None
 
 
 class TaskTodoUpdate(BaseModel):
@@ -241,7 +246,12 @@ async def add_progress(
 ):
     """添加进度记录。"""
     try:
-        await svc.add_progress(task_id, body.agent, body.content)
+        resource = {
+            key: getattr(body, key)
+            for key in ("tokens", "cost", "model", "elapsed", "usage")
+            if getattr(body, key) is not None
+        }
+        await svc.add_progress(task_id, body.agent, body.content, resource=resource)
         return {"message": "ok"}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

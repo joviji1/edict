@@ -8,6 +8,7 @@ import MemorialPanel from './components/MemorialPanel';
 import TemplatePanel from './components/TemplatePanel';
 import MorningPanel from './components/MorningPanel';
 import RelayArchivePanel from './components/RelayArchivePanel';
+import ObservabilityPanel from './components/ObservabilityPanel';
 import OfficialPanel from './components/OfficialPanel';
 import TaskModal from './components/TaskModal';
 import Toaster from './components/Toaster';
@@ -136,6 +137,7 @@ export default function App() {
       {activeTab === 'court' && <CourtDiscussion />}
       {activeTab === 'monitor' && <MonitorPanel />}
       {activeTab === 'relay' && <RelayArchivePanel />}
+      {activeTab === 'observability' && <ObservabilityPanel />}
       {activeTab === 'officials' && <OfficialPanel />}
       {activeTab === 'models' && <ModelConfig />}
       {activeTab === 'skills' && <SkillsConfig />}

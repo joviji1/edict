@@ -414,6 +414,7 @@ class TaskService:
         task_id: uuid.UUID,
         agent: str,
         content: str,
+        resource: dict[str, Any] | None = None,
     ) -> Task:
         task = await self._get_task(task_id)
         summary = self._summarize_text(content)
@@ -423,6 +424,10 @@ class TaskService:
             "text": summary,
             "ts": datetime.now(timezone.utc).isoformat(),
         }
+        for key in ("tokens", "cost", "model", "elapsed", "usage"):
+            value = (resource or {}).get(key)
+            if value is not None:
+                entry[key] = value
         if task.progress_log is None:
             task.progress_log = []
         task.progress_log = [*task.progress_log, entry]

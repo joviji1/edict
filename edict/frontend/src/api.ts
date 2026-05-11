@@ -77,6 +77,10 @@ export const api = {
     fetchJ<GuoshiguanPanelData>(
       `${API_BASE}/api/guoshiguan-panel?limit=${encodeURIComponent(String(limit))}&q=${encodeURIComponent(query)}`
     ),
+  observabilityPanel: (query = '', limit = 20) =>
+    fetchJ<ObservabilityPanelData>(
+      `${API_BASE}/api/observability-panel?limit=${encodeURIComponent(String(limit))}&q=${encodeURIComponent(query)}`
+    ),
 
   // 任务实时动态
   taskActivity: (id: string) =>
@@ -147,7 +151,8 @@ export const api = {
   createTask: (data: CreateTaskPayload) =>
     postJ<ActionResult & { taskId?: string }>(`${API_BASE}/api/create-task`, data),
 
-  // ── 朝堂议政 ──
+
+// ── 朝堂议政 ──
   courtDiscussStart: (topic: string, officials: string[], taskId?: string) =>
     postJ<CourtDiscussResult>(`${API_BASE}/api/court-discuss/start`, { topic, officials, taskId }),
   courtDiscussAdvance: (sessionId: string, userMessage?: string, decree?: string) =>
@@ -161,6 +166,65 @@ export const api = {
 };
 
 // ── Types ──
+
+export interface ObservabilityItem {
+  taskId?: string;
+  title?: string;
+  state?: string;
+  org?: string;
+  updatedAt?: string;
+  matchedText?: string;
+  source?: string;
+  at?: string;
+  level?: string;
+  summary?: string;
+  enabled?: boolean;
+  retryCount?: number;
+  escalationLevel?: number;
+  lastDispatchStatus?: string;
+  lastDispatchAt?: string;
+  lastDispatchError?: string;
+  agentId?: string;
+  sessionId?: string;
+  sessionKey?: string;
+  path?: string;
+  excerpt?: string;
+  tokens?: number;
+  costUsd?: number;
+}
+
+export interface ObservabilityPanelData {
+  ok: boolean;
+  checkedAt: string;
+  query: string;
+  stats: {
+    tasks: number;
+    matchingTasks: number;
+    activeTasks: number;
+    logItems: number;
+    cronItems: number;
+    sessions: number;
+    tokenEvents: number;
+  };
+  sources?: {
+    tasksSource: { count: number; byState?: Record<string, number>; path?: string };
+    liveStatus: { count: number; taskSource?: string; path?: string };
+    backendDb: { count?: number | null; byState?: Record<string, number>; ok?: boolean; error?: string };
+    consistent: boolean;
+  };
+  search: { items: ObservabilityItem[] };
+  logs: { items: ObservabilityItem[] };
+  cron: { items: ObservabilityItem[] };
+  sessions: { items: ObservabilityItem[] };
+  tokens: {
+    summary: { totalTokens: number; totalCostUsd: number };
+    items: ObservabilityItem[];
+    gatewayAuth: { configured: boolean; redactedToken?: string; path?: string; error?: string };
+    modelChanges?: unknown[];
+    lastModelResult?: Record<string, unknown>;
+  };
+}
+
 
 export interface ActionResult {
   ok: boolean;

@@ -13,7 +13,7 @@ Endpoints:
 """
 import json, pathlib, subprocess, sys, threading, argparse, datetime, logging, re, os, socket, shutil, copy
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import urlparse, quote
+from urllib.parse import urlparse, quote, unquote_plus
 from urllib.request import Request, urlopen
 
 # JWT 认证模块
@@ -157,9 +157,9 @@ def _task_write_mode():
     return str(TASK_WRITE_MODE or 'json').strip().lower() or 'json'
 
 
-def _backend_json_request(method, path, payload):
+def _backend_json_request(method, path, payload=None):
     url = f'{BACKEND_URL}{path}'
-    data = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+    data = None if payload is None else json.dumps(payload, ensure_ascii=False).encode('utf-8')
     req = Request(url, data=data, method=method, headers={
         'Content-Type': 'application/json; charset=utf-8',
         'Accept': 'application/json',
@@ -2329,6 +2329,404 @@ def get_guoshiguan_panel(query='', limit=12):
     }
 
 
+def _redact_secret(value):
+    text = str(value or '')
+    if not text:
+        return ''
+    if len(text) <= 8:
+        return '*' * len(text)
+    return f'{text[:3]}…{text[-3:]}'
+
+
+def _safe_lower_text(*parts):
+    return ' '.join(str(part or '') for part in parts).lower()
+
+
+def _task_search_text(task):
+    chunks = [
+        task.get('id', ''), task.get('legacy_id', ''), task.get('title', ''),
+        task.get('state', ''), task.get('org', ''), task.get('targetDept', ''),
+        task.get('now', ''), task.get('block', ''), task.get('output', ''),
+    ]
+    for key in ('flow_log', 'activity', 'progress_log', 'gate_checks'):
+        for entry in task.get(key) or []:
+            if isinstance(entry, dict):
+                chunks.extend(str(v) for v in entry.values() if isinstance(v, (str, int, float)))
+    sched = task.get('_scheduler') or {}
+    if isinstance(sched, dict):
+        chunks.extend(str(v) for v in sched.values() if isinstance(v, (str, int, float)))
+    source = task.get('sourceMeta') or {}
+    if isinstance(source, dict):
+        chunks.extend(str(v) for v in source.values() if isinstance(v, (str, int, float)))
+    return ' '.join(chunks)
+
+
+def _extract_task_log_items(task, limit=8):
+    items = []
+    task_id = task.get('id', '')
+    title = task.get('title', '')
+    for entry in (task.get('flow_log') or [])[-limit:]:
+        if not isinstance(entry, dict):
+            continue
+        summary = str(entry.get('remark') or entry.get('reason') or '').strip()
+        if summary:
+            items.append({
+                'source': 'flow_log', 'taskId': task_id, 'title': title,
+                'at': entry.get('at') or task.get('updatedAt') or '',
+                'level': 'info', 'summary': _safe_excerpt(summary, 240),
+            })
+    for entry in (task.get('activity') or [])[-limit:]:
+        if not isinstance(entry, dict):
+            continue
+        summary = str(entry.get('text') or entry.get('summary') or entry.get('content') or '').strip()
+        if summary:
+            items.append({
+                'source': 'activity', 'taskId': task_id, 'title': title,
+                'at': entry.get('at') or entry.get('timestamp') or task.get('updatedAt') or '',
+                'level': str(entry.get('level') or entry.get('kind') or 'info'),
+                'summary': _safe_excerpt(summary, 240),
+            })
+    sched = task.get('_scheduler') or {}
+    if isinstance(sched, dict):
+        err = str(sched.get('lastDispatchError') or '').strip()
+        status = str(sched.get('lastDispatchStatus') or '').strip()
+        if err or status:
+            items.append({
+                'source': 'scheduler', 'taskId': task_id, 'title': title,
+                'at': sched.get('lastDispatchAt') or sched.get('lastRetryAt') or task.get('updatedAt') or '',
+                'level': 'warn' if err or status in {'failed', 'rate-limited'} else 'info',
+                'summary': _safe_excerpt(err or status, 240),
+            })
+    return items
+
+
+def _read_openclaw_gateway_auth():
+    cfg_path = OCLAW_HOME / 'openclaw.json'
+    try:
+        cfg = json.loads(cfg_path.read_text(encoding='utf-8')) if cfg_path.exists() else {}
+    except Exception as e:
+        return {'configured': False, 'error': f'openclaw.json unreadable: {e}'}
+    token = ''
+    gateway = cfg.get('gateway') or {}
+    if isinstance(gateway, dict):
+        auth = gateway.get('auth') or {}
+        if isinstance(auth, dict):
+            token = auth.get('token') or auth.get('apiKey') or ''
+    return {'configured': bool(token), 'redactedToken': _redact_secret(token), 'path': str(cfg_path) if cfg_path.exists() else ''}
+
+
+def _read_openclaw_agent_models():
+    cfg_path = OCLAW_HOME / 'openclaw.json'
+    try:
+        cfg = json.loads(cfg_path.read_text(encoding='utf-8')) if cfg_path.exists() else {}
+    except Exception:
+        return {}
+    agents = cfg.get('agents') or {}
+    if not isinstance(agents, dict):
+        return {}
+    models = {}
+    for agent_id, info in agents.items():
+        if isinstance(info, dict) and info.get('model'):
+            models[str(agent_id)] = str(info.get('model'))
+    return models
+
+
+def _infer_agent_id(task):
+    source = task.get('sourceMeta') or {}
+    session_key = ''
+    if isinstance(source, dict):
+        session_key = str(source.get('sessionKey') or source.get('session_key') or '')
+    m = re.search(r'agent:([^:\s]+)', session_key)
+    if m:
+        return m.group(1)
+    org = str(task.get('org') or task.get('assignee_org') or '').strip()
+    org_map = {
+        '太子': 'taizi', '中书省': 'zhongshu', '门下省': 'menxia', '尚书省': 'shangshu',
+        '户部': 'hubu', '礼部': 'libu', '兵部': 'bingbu', '刑部': 'xingbu', '工部': 'gongbu',
+    }
+    return org_map.get(org, org)
+
+
+def _collect_session_summaries(query='', limit=8):
+    q = str(query or '').lower().strip()
+    items = []
+    agents_root = OCLAW_HOME / 'agents'
+    if not agents_root.exists():
+        return items
+    for sessions_file in sorted(agents_root.glob('*/sessions/sessions.json')):
+        agent_id = sessions_file.parent.parent.name
+        try:
+            data = json.loads(sessions_file.read_text(encoding='utf-8'))
+        except Exception:
+            continue
+        raw_items = data.get('items') if isinstance(data, dict) else None
+        if raw_items is None and isinstance(data, dict):
+            raw_items = list(data.values())
+        if not isinstance(raw_items, list):
+            continue
+        for sess in raw_items:
+            if not isinstance(sess, dict):
+                continue
+            session_id = str(sess.get('id') or sess.get('sessionId') or sess.get('key') or '')
+            session_key = str(sess.get('sessionKey') or sess.get('key') or '')
+            title = str(sess.get('title') or session_key or session_id)
+            transcript = pathlib.Path(str(sess.get('file') or sess.get('path') or '')) if (sess.get('file') or sess.get('path')) else None
+            excerpt = ''
+            message_count = 0
+            heartbeat = False
+            if transcript and transcript.exists():
+                try:
+                    lines = transcript.read_text(encoding='utf-8', errors='replace').splitlines()[-10:]
+                    parsed = []
+                    for line in lines:
+                        message_count += 1
+                        try:
+                            obj = json.loads(line)
+                            text = str(obj.get('text') or obj.get('content') or obj.get('message') or obj.get('data') or '')
+                            if obj.get('type') == 'heartbeat' or 'heartbeat' in text.lower():
+                                heartbeat = True
+                            parsed.append(text[:220])
+                        except Exception:
+                            if 'heartbeat' in line.lower():
+                                heartbeat = True
+                            parsed.append(line[:220])
+                    excerpt = ' '.join(x for x in parsed if x)
+                except Exception:
+                    excerpt = ''
+            haystack = _safe_lower_text(agent_id, session_id, session_key, title, excerpt)
+            if q and q not in haystack:
+                continue
+            items.append({
+                'agentId': agent_id,
+                'sessionId': session_id,
+                'sessionKey': session_key,
+                'title': title,
+                'status': sess.get('status') or 'running',
+                'updatedAt': sess.get('updatedAt') or sess.get('lastActive') or '',
+                'path': str(transcript) if transcript else '',
+                'excerpt': _safe_excerpt(excerpt, 360),
+                'messageCount': message_count,
+                'markers': {'heartbeat': heartbeat},
+            })
+    items.sort(key=lambda item: str(item.get('updatedAt') or ''), reverse=True)
+    return items[:max(1, int(limit or 8))]
+
+
+def _collect_observability_sources(tasks):
+    """只读汇总三面任务源：tasks_source.json / live_status.json / backend DB API。"""
+    task_data_dir = get_task_data_dir()
+    live = read_json(task_data_dir / 'live_status.json', {})
+    live_active = live.get('activeTasks') or {}
+    live_completed = live.get('completedTasks') or {}
+    if isinstance(live_active, dict) or isinstance(live_completed, dict):
+        live_count = len(live_active if isinstance(live_active, dict) else {}) + len(live_completed if isinstance(live_completed, dict) else {})
+    else:
+        live_tasks = live.get('tasks') or []
+        live_count = len(live_tasks) if isinstance(live_tasks, list) else 0
+    live_meta_count = (live.get('taskSourceMeta') or {}).get('count') if isinstance(live, dict) else None
+    if isinstance(live_meta_count, int) and live_meta_count >= live_count:
+        live_count = live_meta_count
+
+    backend_summary = {'count': None, 'byState': {}, 'ok': False}
+    try:
+        payload = _backend_json_request('GET', '/api/tasks?limit=200')
+        backend_tasks = payload.get('tasks') if isinstance(payload, dict) else payload
+        if isinstance(backend_tasks, list):
+            by_state = {}
+            for item in backend_tasks:
+                if not isinstance(item, dict):
+                    continue
+                state = str(item.get('state') or item.get('status') or 'Unknown')
+                by_state[state] = by_state.get(state, 0) + 1
+            backend_summary = {'count': len(backend_tasks), 'byState': by_state, 'ok': True}
+    except Exception as e:
+        backend_summary = {'count': None, 'byState': {}, 'ok': False, 'error': _safe_excerpt(str(e), 180)}
+
+    tasks_by_state = {}
+    for task in tasks:
+        state = str(task.get('state') or 'Unknown')
+        tasks_by_state[state] = tasks_by_state.get(state, 0) + 1
+    counts = [len(tasks), live_count]
+    if backend_summary.get('count') is not None:
+        counts.append(backend_summary.get('count'))
+    return {
+        'tasksSource': {'count': len(tasks), 'byState': tasks_by_state, 'path': str(task_data_dir / 'tasks_source.json')},
+        'liveStatus': {'count': live_count, 'taskSource': live.get('taskSource') if isinstance(live, dict) else '', 'path': str(task_data_dir / 'live_status.json')},
+        'backendDb': backend_summary,
+        'consistent': len(set(counts)) == 1,
+    }
+
+
+def get_observability_panel(query='', limit=12):
+    """只读观测面板：搜索、日志、cron/scheduler、session、token/cost 汇总。"""
+    limit = max(1, int(limit or 12))
+    query = str(query or '').strip().lower()
+    tasks = [t for t in load_tasks() if isinstance(t, dict)]
+    matched_tasks = []
+    for task in tasks:
+        haystack = _task_search_text(task)
+        if not query or query in haystack.lower():
+            matched_tasks.append(task)
+
+    search_items = []
+    for task in matched_tasks[:limit]:
+        text = _task_search_text(task)
+        search_items.append({
+            'taskId': task.get('id', ''),
+            'title': task.get('title', ''),
+            'state': task.get('state', ''),
+            'org': task.get('org', ''),
+            'updatedAt': task.get('updatedAt', ''),
+            'matchedText': _safe_excerpt(text, 360),
+        })
+
+    governance_samples = read_json(DATA / 'tasks_governance_samples.json', [])
+    if not isinstance(governance_samples, list):
+        governance_samples = []
+    matched_governance_samples = []
+    for sample in governance_samples:
+        if not isinstance(sample, dict):
+            continue
+        haystack = _safe_lower_text(
+            sample.get('id'), sample.get('title'), sample.get('state'), sample.get('org'),
+            sample.get('now'), sample.get('summary'), json.dumps(sample.get('autopsy') or {}, ensure_ascii=False),
+        )
+        if not query or query in haystack:
+            matched_governance_samples.append(sample)
+
+    logs = []
+    for task in matched_tasks:
+        logs.extend(_extract_task_log_items(task))
+    if query:
+        qlogs = [item for item in logs if query in _safe_lower_text(item.get('summary'), item.get('taskId'), item.get('title'))]
+        if qlogs:
+            logs = qlogs
+    logs.sort(key=lambda item: (item.get('at') or '', item.get('taskId') or ''), reverse=True)
+    logs = logs[:limit]
+    log_streams = {'edict': 0, 'scheduler': 0, 'dispatch': 0}
+    for item in logs:
+        source = str(item.get('source') or '')
+        if source in {'flow_log', 'activity'}:
+            log_streams['edict'] += 1
+        if source == 'scheduler':
+            log_streams['scheduler'] += 1
+            log_streams['dispatch'] += 1
+
+    cron_items = []
+    for task in tasks:
+        sched = task.get('_scheduler') or {}
+        if not isinstance(sched, dict) or not sched:
+            continue
+        cron_items.append({
+            'taskId': task.get('id', ''),
+            'title': task.get('title', ''),
+            'state': task.get('state', ''),
+            'enabled': sched.get('enabled', True),
+            'retryCount': int(sched.get('retryCount') or 0),
+            'escalationLevel': int(sched.get('escalationLevel') or 0),
+            'lastDispatchStatus': sched.get('lastDispatchStatus') or 'idle',
+            'lastDispatchAt': sched.get('lastDispatchAt') or sched.get('lastRetryAt') or '',
+            'lastDispatchError': _safe_excerpt(sched.get('lastDispatchError') or '', 220),
+            'nextRunHint': sched.get('nextRunAt') or sched.get('lastDispatchAt') or sched.get('lastRetryAt') or task.get('updatedAt') or '',
+        })
+    cron_items.sort(key=lambda item: (item.get('lastDispatchAt') or '', item.get('taskId') or ''), reverse=True)
+    cron_items = cron_items[:limit]
+    cron_summary = {
+        'total': len(cron_items),
+        'failed': sum(1 for item in cron_items if item.get('lastDispatchError') or item.get('lastDispatchStatus') in {'failed', 'rate-limited'}),
+        'enabled': sum(1 for item in cron_items if item.get('enabled') is not False),
+    }
+
+    total_tokens = 0
+    total_cost = 0.0
+    token_events = []
+    tokens_by_agent = {}
+    tokens_by_model = {}
+    tokens_by_task = {}
+    agent_models = _read_openclaw_agent_models()
+    for task in tasks:
+        agent_id = _infer_agent_id(task)
+        model = str(task.get('model') or agent_models.get(agent_id) or '')
+        for entry in task.get('progress_log') or []:
+            if not isinstance(entry, dict):
+                continue
+            tokens = int(entry.get('tokens') or 0)
+            cost = float(entry.get('cost') or 0)
+            if tokens or cost:
+                total_tokens += tokens
+                total_cost += cost
+                if agent_id:
+                    slot = tokens_by_agent.setdefault(agent_id, {'tokens': 0, 'costUsd': 0.0})
+                    slot['tokens'] += tokens
+                    slot['costUsd'] = round(slot['costUsd'] + cost, 6)
+                if model:
+                    slot = tokens_by_model.setdefault(model, {'tokens': 0, 'costUsd': 0.0})
+                    slot['tokens'] += tokens
+                    slot['costUsd'] = round(slot['costUsd'] + cost, 6)
+                task_id = task.get('id', '')
+                if task_id:
+                    slot = tokens_by_task.setdefault(task_id, {'tokens': 0, 'costUsd': 0.0})
+                    slot['tokens'] += tokens
+                    slot['costUsd'] = round(slot['costUsd'] + cost, 6)
+                token_events.append({
+                    'taskId': task.get('id', ''),
+                    'title': task.get('title', ''),
+                    'at': entry.get('at') or task.get('updatedAt') or '',
+                    'tokens': tokens,
+                    'costUsd': round(cost, 6),
+                    'summary': _safe_excerpt(entry.get('msg') or entry.get('summary') or task.get('title') or '', 160),
+                })
+    token_events.sort(key=lambda item: (item.get('at') or '', item.get('taskId') or ''), reverse=True)
+    model_changes = read_json(DATA / 'model_change_log.json', [])
+    last_model_result = read_json(DATA / 'last_model_change_result.json', {})
+
+    session_items = _collect_session_summaries(query=query, limit=limit)
+    result = {
+        'ok': True,
+        'checkedAt': now_iso(),
+        'query': query,
+        'stats': {
+            'tasks': len(tasks),
+            'matchingTasks': len(matched_tasks),
+            'activeTasks': sum(1 for t in tasks if t.get('state') not in _TERMINAL_STATES and not t.get('archived')),
+            'logItems': len(logs),
+            'cronItems': len(cron_items),
+            'sessions': len(session_items),
+            'tokenEvents': len(token_events),
+        },
+        'sources': _collect_observability_sources(tasks),
+        'search': {
+            'items': search_items,
+            'groups': {
+                'tasks': len(search_items),
+                'logs': len(logs),
+                'cron': len(cron_items),
+                'sessions': len(session_items),
+                'tokenEvents': len(token_events),
+                'governanceSamples': len(matched_governance_samples),
+            },
+        },
+        'logs': {'items': logs, 'streams': log_streams},
+        'cron': {'items': cron_items, 'summary': cron_summary},
+        'sessions': {'items': session_items},
+        'tokens': {
+            'summary': {
+                'totalTokens': total_tokens,
+                'totalCostUsd': round(total_cost, 6),
+                'byAgent': tokens_by_agent,
+                'byModel': tokens_by_model,
+                'byTask': tokens_by_task,
+                'alerts': [item for item in token_events if item.get('tokens') or item.get('costUsd')],
+            },
+            'items': token_events[:limit],
+            'gatewayAuth': _read_openclaw_gateway_auth(),
+            'modelChanges': model_changes[-limit:] if isinstance(model_changes, list) else [],
+            'lastModelResult': last_model_result if isinstance(last_model_result, dict) else {},
+        },
+    }
+    return result
+
+
 def handle_scheduler_retry(task_id, reason=''):
     state_holder = {'task': None, 'state': '', 'retryCount': 0}
 
@@ -3701,11 +4099,22 @@ class Handler(BaseHTTPRequestHandler):
 
     def _check_auth(self):
         """检查认证，未通过返回 True（已发送 401 响应）。"""
-        p = urlparse(self.path).path.rstrip('/')
-        if not requires_auth(p):
-            return False
-        token = extract_token(self.headers)
-        if not token or not verify_token(token):
+        try:
+            p = urlparse(self.path).path.rstrip('/')
+            if not requires_auth(p):
+                return False
+            token = extract_token(self.headers)
+            token_ok = False
+            if token:
+                try:
+                    token_ok = verify_token(token)
+                except Exception:
+                    log.exception('Dashboard auth token verification failed')
+                    token_ok = False
+        except Exception:
+            log.exception('Dashboard auth precheck failed')
+            token_ok = False
+        if not token_ok:
             self.send_json({'ok': False, 'error': '未登录或会话已过期'}, 401)
             return True
         return False
@@ -3827,6 +4236,23 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     query = m_query.group(1)
             self.send_json(get_guoshiguan_panel(query=query, limit=limit))
+        elif p == '/api/observability-panel':
+            q = urlparse(self.path).query
+            m_limit = re.search(r'(?:^|&)limit=(\d+)', q or '')
+            m_query = re.search(r'(?:^|&)q=([^&]+)', q or '')
+            limit = int(m_limit.group(1)) if m_limit else 12
+            query = ''
+            if m_query:
+                try:
+                    from urllib.parse import unquote_plus
+                    query = unquote_plus(m_query.group(1))
+                except Exception:
+                    query = m_query.group(1)
+            try:
+                self.send_json(get_observability_panel(query=query, limit=limit))
+            except Exception as e:
+                log.exception('observability-panel failed')
+                self.send_json({'ok': False, 'error': f'observability panel failed: {e}'}, 500)
         elif p == '/api/agents-status':
             self.send_json(get_agents_status())
         elif p.startswith('/api/task-output/'):

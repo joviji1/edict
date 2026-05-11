@@ -48,6 +48,98 @@ def test_healthz(tmp_path):
     httpd.server_close()
 
 
+def test_check_auth_verifier_exception_returns_401(tmp_path, monkeypatch):
+    """verify_token 自身异常时，认证层应返回 401，而不是断开连接。"""
+    data_dir = tmp_path / 'data'
+    data_dir.mkdir()
+    (data_dir / 'tasks_source.json').write_text('[]', encoding='utf-8')
+
+    import server as srv
+    srv.DATA = data_dir
+    srv._ACTIVE_TASK_DATA_DIR = None
+    monkeypatch.setattr(srv, 'requires_auth', lambda path: True)
+    monkeypatch.setattr(srv, 'verify_token', lambda token: (_ for _ in ()).throw(RuntimeError('token verifier crashed')))
+
+    from http.server import HTTPServer
+    port = 18973
+    httpd = HTTPServer(('127.0.0.1', port), srv.Handler)
+    t = threading.Thread(target=httpd.handle_request, daemon=True)
+    t.start()
+    time.sleep(0.1)
+
+    conn = HTTPConnection('127.0.0.1', port, timeout=5)
+    conn.request('GET', '/api/live-status', headers={'Authorization': 'Bearer bad-token'})
+    resp = conn.getresponse()
+    body = json.loads(resp.read())
+    conn.close()
+    httpd.server_close()
+
+    assert resp.status == 401
+    assert body['ok'] is False
+    assert '未登录' in body['error']
+
+
+def test_check_auth_requires_auth_exception_returns_401(tmp_path, monkeypatch):
+    """requires_auth 自身异常时，认证层应返回 401，而不是断开连接。"""
+    data_dir = tmp_path / 'data'
+    data_dir.mkdir()
+    (data_dir / 'tasks_source.json').write_text('[]', encoding='utf-8')
+
+    import server as srv
+    srv.DATA = data_dir
+    srv._ACTIVE_TASK_DATA_DIR = None
+    monkeypatch.setattr(srv, 'requires_auth', lambda path: (_ for _ in ()).throw(RuntimeError('requires_auth crashed')))
+
+    from http.server import HTTPServer
+    port = 18976
+    httpd = HTTPServer(('127.0.0.1', port), srv.Handler)
+    t = threading.Thread(target=httpd.handle_request, daemon=True)
+    t.start()
+    time.sleep(0.1)
+
+    conn = HTTPConnection('127.0.0.1', port, timeout=5)
+    conn.request('GET', '/api/live-status', headers={'Authorization': 'Bearer bad-token'})
+    resp = conn.getresponse()
+    body = json.loads(resp.read())
+    conn.close()
+    httpd.server_close()
+
+    assert resp.status == 401
+    assert body['ok'] is False
+    assert '未登录' in body['error']
+
+
+def test_check_auth_extract_token_exception_returns_401(tmp_path, monkeypatch):
+    """extract_token 自身异常时，认证层应返回 401，而不是断开连接。"""
+    data_dir = tmp_path / 'data'
+    data_dir.mkdir()
+    (data_dir / 'tasks_source.json').write_text('[]', encoding='utf-8')
+
+    import server as srv
+    srv.DATA = data_dir
+    srv._ACTIVE_TASK_DATA_DIR = None
+    monkeypatch.setattr(srv, 'requires_auth', lambda path: True)
+    monkeypatch.setattr(srv, 'extract_token', lambda headers: (_ for _ in ()).throw(RuntimeError('extract_token crashed')))
+
+    from http.server import HTTPServer
+    port = 18977
+    httpd = HTTPServer(('127.0.0.1', port), srv.Handler)
+    t = threading.Thread(target=httpd.handle_request, daemon=True)
+    t.start()
+    time.sleep(0.1)
+
+    conn = HTTPConnection('127.0.0.1', port, timeout=5)
+    conn.request('GET', '/api/live-status', headers={'Authorization': 'Bearer bad-token'})
+    resp = conn.getresponse()
+    body = json.loads(resp.read())
+    conn.close()
+    httpd.server_close()
+
+    assert resp.status == 401
+    assert body['ok'] is False
+    assert '未登录' in body['error']
+
+
 def test_remote_skills_api_lists_source_managed_skill(tmp_path):
     data_dir = tmp_path / 'data'
     data_dir.mkdir()
@@ -2020,3 +2112,186 @@ def test_startup_recover_queued_dispatches_keeps_shangshu_queued_without_redispa
             'lastDispatchAgent': 'shangshu',
         }
     }
+
+
+def test_get_observability_panel_summarizes_search_logs_cron_session_token(tmp_path, monkeypatch):
+    data_dir = tmp_path / 'data'
+    data_dir.mkdir()
+    (data_dir / 'tasks_source.json').write_text(json.dumps([
+        {
+            'id': 'OBS-SEARCH-1',
+            'title': '搜索和日志观测任务',
+            'state': 'Doing',
+            'org': '太子',
+            'now': '正在排查 token 兼容路径',
+            'updatedAt': '2026-05-11T02:00:00Z',
+            'sourceMeta': {'sessionKey': 'agent:taizi:edict-dispatch'},
+            '_scheduler': {
+                'enabled': True,
+                'retryCount': 2,
+                'lastDispatchStatus': 'rate-limited',
+                'lastDispatchError': '429 upstream key expired',
+                'lastDispatchAt': '2026-05-11T02:01:00Z',
+            },
+            'progress_log': [
+                {'at': '2026-05-11T02:02:00Z', 'tokens': 321, 'cost': 0.12, 'elapsed': 9, 'msg': 'token usage sample'},
+            ],
+            'flow_log': [
+                {'at': '2026-05-11T02:03:00Z', 'from': '太子', 'to': '中书省', 'remark': '搜索日志定位 key 过期'},
+            ],
+            'activity': [
+                {'at': '2026-05-11T02:04:00Z', 'kind': 'assistant', 'text': '兼容路径 /v1/chat/completions 失败'},
+            ],
+        },
+        {
+            'id': 'OBS-DONE-1',
+            'title': '已完成样本',
+            'state': 'Done',
+            'org': '工部',
+            'updatedAt': '2026-05-10T02:00:00Z',
+            'progress_log': [{'tokens': 100, 'cost': 0.03}],
+        },
+    ], ensure_ascii=False), encoding='utf-8')
+    (data_dir / 'model_change_log.json').write_text(json.dumps([
+        {'at': '2026-05-11T02:05:00Z', 'agentId': 'taizi', 'model': 'gpt-5.4', 'result': 'ok'}
+    ], ensure_ascii=False), encoding='utf-8')
+    (data_dir / 'last_model_change_result.json').write_text(json.dumps({
+        'ok': False,
+        'error': 'compat route token expired',
+        'checkedAt': '2026-05-11T02:06:00Z',
+    }, ensure_ascii=False), encoding='utf-8')
+    (data_dir / 'live_status.json').write_text(json.dumps({
+        'activeTasks': {'OBS-SEARCH-1': {'state': 'Doing'}},
+        'completedTasks': {'OBS-DONE-1': {'state': 'Done'}},
+        'taskSource': 'backend_api_export',
+        'taskSourceMeta': {'count': 2},
+    }, ensure_ascii=False), encoding='utf-8')
+    (data_dir / 'tasks_governance_samples.json').write_text(json.dumps([
+        {
+            'id': 'GOV-SAMPLE-1',
+            'title': '治理样本 token 复盘',
+            'state': 'Review',
+            'org': '门下省',
+            'updatedAt': '2026-05-11T02:09:00Z',
+            'now': 'token governance sample',
+            'autopsy': {'reason': 'token cost spike'},
+        }
+    ], ensure_ascii=False), encoding='utf-8')
+
+    import server as srv
+    srv.DATA = data_dir
+    srv._ACTIVE_TASK_DATA_DIR = None
+
+    def fake_backend_request(method, path, payload=None):
+        assert method == 'GET'
+        if path.startswith('/api/tasks?'):
+            return {'tasks': [
+                {'id': 'backend-1', 'state': 'Doing'},
+                {'id': 'backend-2', 'state': 'Done'},
+            ], 'count': 2}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(srv, '_backend_json_request', fake_backend_request)
+
+    oc_home = tmp_path / '.openclaw'
+    agent_sessions = oc_home / 'agents' / 'taizi' / 'sessions'
+    agent_sessions.mkdir(parents=True)
+    session_file = agent_sessions / 'session-1.jsonl'
+    session_file.write_text(
+        json.dumps({'type': 'user', 'timestamp': '2026-05-11T02:07:00Z', 'text': '查最近 proxy log'}, ensure_ascii=False) + '\n' +
+        json.dumps({'type': 'assistant', 'timestamp': '2026-05-11T02:08:00Z', 'text': '发现 token expired'}, ensure_ascii=False) + '\n',
+        encoding='utf-8'
+    )
+    (agent_sessions / 'sessions.json').write_text(json.dumps({
+        'items': [
+            {
+                'id': 'session-1',
+                'sessionKey': 'agent:taizi:edict-dispatch',
+                'updatedAt': 1778465280000,
+                'title': 'edict dispatch',
+                'file': str(session_file),
+            }
+        ]
+    }, ensure_ascii=False), encoding='utf-8')
+    (oc_home / 'openclaw.json').write_text(json.dumps({
+        'gateway': {'auth': {'token': 'real-secret-token'}},
+        'agents': {'taizi': {'model': 'gpt-5.4'}},
+    }, ensure_ascii=False), encoding='utf-8')
+    monkeypatch.setattr(srv, 'OCLAW_HOME', oc_home)
+
+    body = srv.get_observability_panel(query='token', limit=5)
+
+    assert body['ok'] is True
+    assert body['query'] == 'token'
+    assert body['stats']['matchingTasks'] == 1
+    assert body['stats']['activeTasks'] == 1
+    assert body['stats']['tokenEvents'] >= 2
+    assert body['stats']['cronItems'] >= 1
+    assert body['search']['items'][0]['taskId'] == 'OBS-SEARCH-1'
+    assert 'token' in body['search']['items'][0]['matchedText'].lower()
+    assert body['logs']['items']
+    assert any('token' in item['summary'].lower() or 'key' in item['summary'].lower() for item in body['logs']['items'])
+    assert body['cron']['items'][0]['taskId'] == 'OBS-SEARCH-1'
+    assert body['sessions']['items'][0]['agentId'] == 'taizi'
+    assert body['tokens']['summary']['totalTokens'] == 421
+    assert body['tokens']['summary']['totalCostUsd'] == 0.15
+    assert 'real-secret-token' not in json.dumps(body, ensure_ascii=False)
+    assert body['tokens']['gatewayAuth']['configured'] is True
+    assert body['tokens']['gatewayAuth']['redactedToken'].startswith('rea')
+    assert body['sources']['tasksSource']['count'] == 2
+    assert body['sources']['liveStatus']['count'] == 2
+    assert body['sources']['backendDb']['count'] == 2
+    assert body['sources']['consistent'] is True
+    assert body['search']['groups']['tasks'] == 1
+    assert body['search']['groups']['logs'] >= 1
+    assert body['search']['groups']['sessions'] == 1
+    assert body['search']['groups']['governanceSamples'] == 1
+    assert body['logs']['streams']['edict'] >= 1
+    assert body['logs']['streams']['scheduler'] >= 1
+    assert body['logs']['streams']['dispatch'] >= 1
+    assert body['cron']['summary']['total'] == 1
+    assert body['cron']['summary']['failed'] == 1
+    assert body['cron']['items'][0]['nextRunHint']
+    assert body['sessions']['items'][0]['status'] == 'running'
+    assert body['sessions']['items'][0]['messageCount'] == 2
+    assert body['sessions']['items'][0]['markers']['heartbeat'] is False
+    assert body['tokens']['summary']['byAgent']['taizi']['tokens'] == 321
+    assert body['tokens']['summary']['byModel']['gpt-5.4']['tokens'] == 321
+    assert body['tokens']['summary']['byTask']['OBS-SEARCH-1']['tokens'] == 321
+    assert body['tokens']['summary']['alerts']
+
+
+def test_observability_panel_route_returns_payload(tmp_path):
+    data_dir = tmp_path / 'data'
+    data_dir.mkdir()
+    (data_dir / 'tasks_source.json').write_text(json.dumps([{
+        'id': 'OBS-ROUTE-1',
+        'title': 'route token smoke',
+        'state': 'Doing',
+        'org': '太子',
+        'now': 'token path check',
+        'updatedAt': '2026-05-11T02:00:00Z',
+    }], ensure_ascii=False), encoding='utf-8')
+
+    import server as srv
+    srv.DATA = data_dir
+    srv._ACTIVE_TASK_DATA_DIR = None
+
+    from http.server import HTTPServer
+    port = 18972
+    httpd = HTTPServer(('127.0.0.1', port), srv.Handler)
+    t = threading.Thread(target=httpd.handle_request, daemon=True)
+    t.start()
+    time.sleep(0.1)
+
+    conn = HTTPConnection('127.0.0.1', port, timeout=5)
+    conn.request('GET', '/api/observability-panel?q=token&limit=3')
+    resp = conn.getresponse()
+    body = json.loads(resp.read())
+    conn.close()
+    httpd.server_close()
+
+    assert resp.status == 200
+    assert body['ok'] is True
+    assert body['query'] == 'token'
+    assert body['stats']['matchingTasks'] == 1

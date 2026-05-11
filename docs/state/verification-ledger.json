@@ -1,8 +1,70 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-05-11 10:02",
+  "updated_at": "2026-05-12 07:44",
   "timezone": "Asia/Shanghai",
   "entries": [
+    {
+      "entry_id": "VERIF-20260512-0744-OBSERVABILITY-SAFE-UPDATE-CLOSEOUT",
+      "feature_id": "EDICT-OBSERVABILITY-SAFE-UPDATE-001",
+      "category": "code_verification",
+      "status": "passed",
+      "summary": "观星台完整聚合返回体与 safe_update prepare 稳定性已补齐，代码/测试/构建通过；live auth+sources smoke 健康。",
+      "real_deliverable": "补齐 /api/observability-panel 的 search/logs/cron/sessions/tokens/governanceSamples 只读聚合字段；让 safe_update prepare 跳过 workspace 整体备份以避免测试/备份面假红。",
+      "evidence": [
+        "bash -n scripts/memory_backup.sh scripts/safe_update.sh -> passed",
+        "python3 -m py_compile dashboard/server.py scripts/smoke_observability_auth.py edict/backend/app/api/tasks.py edict/backend/app/services/task_service.py tests/test_server.py tests/test_smoke_observability_auth.py tests/test_backend_progress_resource_fields.py -> passed",
+        "focused pytest: tests/test_safe_update_script.py tests/test_smoke_observability_auth.py tests/test_backend_progress_resource_fields.py tests/test_server.py::test_check_auth_verifier_exception_returns_401 tests/test_server.py::test_check_auth_requires_auth_exception_returns_401 tests/test_server.py::test_get_observability_panel_summarizes_search_logs_cron_session_token tests/test_server.py::test_observability_panel_route_returns_payload -> 12 passed in 3.21s",
+        "cd edict/frontend && npm run build -> passed；dashboard/dist assets index-Be6XNtVi.js / index-CozhF3U3.css",
+        "EDICT_DASHBOARD_PASSWORD=*** python3 scripts/smoke_observability_auth.py --base-url http://127.0.0.1:7892 --query token --limit 3 -> HTTP 200 ok=true tokenRedacted=true sources.consistent=true；tasks/live/backend counts all 20"
+      ],
+      "notes": [
+        "本轮未重启 dashboard；新增细分聚合字段需 dashboard 下次重启后进入 live 进程",
+        "live q=token 当前 matchingTasks/tokenEvents/sessions/cronItems 为 0，是现场无匹配样本，不是 sources/auth 链路失败",
+        "safe_update prepare 默认设置 EDICT_MEMORY_BACKUP_SKIP_WORKSPACE=1，仅跳过 workspace 整体备份，不影响 memory/data/config/systemd/git 指针备份"
+      ],
+      "source_refs": [
+        ".gitignore",
+        "dashboard/server.py",
+        "scripts/memory_backup.sh",
+        "scripts/safe_update.sh",
+        "tests/test_server.py",
+        "tests/test_safe_update_script.py",
+        "docs/current-progress-board.md",
+        "docs/state/verification-ledger.json"
+      ],
+      "verified_at": "2026-05-12 07:44",
+      "timezone": "Asia/Shanghai"
+    },
+    {
+      "entry_id": "VERIF-20260511-1936-DASHBOARD-LIVE-PRECHECK-RESTART",
+      "feature_id": "EDICT-DASHBOARD-LIVE-CODE-LOAD-001",
+      "category": "runtime_verification",
+      "status": "passed",
+      "summary": "重启后的 dashboard live 进程已加载 18:09 后新增的更外层 auth precheck 兜底，系统级验收通过。",
+      "real_deliverable": "把 live 进程切到带 verify_token / precheck / observability sources 兜底的代码，并完成 health、doctor、三面一致、export freshness、session monitor 的系统级复核。",
+      "evidence": [
+        "live service: edict-dashboard.service active，MainPID=1239890，ActiveEnterTimestamp=2026-05-11 19:22:56 CST；源码 mtime=2026-05-11 18:09:43 CST，进程启动晚于代码修改",
+        "/healthz -> HTTP 200；/api/auth/status -> enabled=true/configured=true；坏 Bearer 访问 /api/live-status -> HTTP 401 JSON 而非断连接",
+        "带 auth 的 /api/observability-panel?limit=3&q=token -> HTTP 200，ok=true，hasSources=true，tokenRedacted=true，sources.consistent=true",
+        "py_compile 通过；pytest tests/test_server.py::test_check_auth_verifier_exception_returns_401 tests/test_server.py::test_check_auth_requires_auth_exception_returns_401 tests/test_server.py::test_get_observability_panel_summarizes_search_logs_cron_session_token -q -> 3 passed",
+        "doctor_edict.sh -> PASS=32 WARN=0 FAIL=0；backend / tasks_source.json / live_status.json 三面均为 20 条，Done=5 / Cancelled=15，consistent=true",
+        "tasks_backend_export_meta.exportedAt=2026-05-11T11:34:01.018040+00:00，taskSource=backend_api_export，sourceLayer=backend_export",
+        "monitor_openclaw_sessions.py --agents taizi zhongshu menxia shangshu --json 初验 high=0 medium=1 low=0；已确认该 medium 为历史索引噪音，修正后复验 high=0 medium=0 low=0 issues=[]"
+      ],
+      "notes": [
+        "重启会让旧 dashboard JWT 失效，需要重新登录",
+        "session monitor 的 medium 告警已按历史假阳性修正：/root/.openclaw/agents/zhongshu/sessions/sessions.json 中 agent:zhongshu:edict-dispatch 原为 running，但 metadata 已标记 closed/noiseCleared；已备份到 /root/.hermes/backups/zhongshu-session-running-fix-20260511-193554/ 后改为 done 并再次验证 issues=[]"
+      ],
+      "source_refs": [
+        "dashboard/server.py",
+        "dashboard/auth.py",
+        "tests/test_server.py",
+        "docs/current-progress-board.md",
+        "docs/state/verification-ledger.json"
+      ],
+      "verified_at": "2026-05-11 19:36",
+      "timezone": "Asia/Shanghai"
+    },
     {
       "entry_id": "VERIF-20260511-1002-JQ-DOCTOR-CLEAN-REPLAY",
       "feature_id": "EDICT-COMPREHENSIVE-UPGRADE-CLOSEOUT-001",
