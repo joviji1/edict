@@ -1,8 +1,38 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-05-11 09:36",
+  "updated_at": "2026-05-11 09:42",
   "timezone": "Asia/Shanghai",
   "entries": [
+    {
+      "entry_id": "VERIF-20260511-0942-FINAL-CLOSEOUT",
+      "feature_id": "EDICT-COMPREHENSIVE-UPGRADE-CLOSEOUT-001",
+      "category": "final_closeout",
+      "status": "passed_with_notes",
+      "summary": "edict 全面提升主线完成最终总验收：健康、doctor、三面一致、session monitor、关键回归均通过。",
+      "real_deliverable": "仓库/提交面、backend export 主链、治理字段入口、真实自然样本、session 观测噪音与最终验收记录均已落地。",
+      "evidence": [
+        "dashboard /healthz -> status ok；backend /health -> ok；deep health -> postgres=true redis=true",
+        "doctor_edict.sh -> PASS=31 WARN=1 FAIL=0；WARN 为 jq 缺失，非主链失败",
+        "三面一致：backend/tasks_source/live_status 均 20 条，状态 Done=5 / Cancelled=15，taskSource=backend_api_export",
+        "session monitor：high=0 medium=0 low=0 issues=[]",
+        "关键回归：python3 -m pytest -q tests/test_review_action_routes.py tests/test_backend_review_action.py tests/test_export_backend_tasks_to_legacy_json.py tests/test_refresh_live_data_layers.py tests/test_sidecar_scripts.py -> 22 passed",
+        "最近关键提交：632a480 fix(governance): 保留 create 入口治理字段；926ed10 chore(observability): 清理 OpenClaw session 噪音；2deec7b docs(board): 回写未跟踪面收口结果"
+      ],
+      "notes": [
+        "doctor WARN=1 是 jq 缺失/环境工具缺口，未影响服务健康和三面一致",
+        "clean replay 未在最终盖章轮重跑；本次 final closeout 以 live runtime + 关键回归为盖章证据。若后续要升级官方 overlay，可单独再跑 replay。",
+        "PWA/Notion/Linear/移动端等仍属于后置增强，不纳入本次全面提升完成门槛"
+      ],
+      "source_refs": [
+        "docs/current-progress-board.md",
+        "docs/state/verification-ledger.json",
+        "tests/test_review_action_routes.py",
+        "tests/test_backend_review_action.py",
+        "tests/test_sidecar_scripts.py"
+      ],
+      "verified_at": "2026-05-11 09:42",
+      "timezone": "Asia/Shanghai"
+    },
     {
       "entry_id": "VERIF-20260511-0936-GOVERNANCE-FIELD-CREATE-FIX",
       "feature_id": "EDICT-GOVERNANCE-SAMPLE-001",
