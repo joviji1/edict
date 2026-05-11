@@ -1,9 +1,20 @@
+import datetime
 import importlib.util
 import json
 import pathlib
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+def recent_iso(hours_ago=0):
+    dt = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=hours_ago)
+    return dt.replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+
+
+def recent_epoch_ms(hours_ago=0):
+    dt = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=hours_ago)
+    return int(dt.timestamp() * 1000)
 SCRIPTS = ROOT / 'scripts'
 sys.path.insert(0, str(SCRIPTS))
 
@@ -20,8 +31,8 @@ def test_main_extracts_and_merges_governance_samples(tmp_path, monkeypatch):
             'id': 'OC-runtime-1',
             'title': '待审批样本',
             'state': 'PendingConfirm',
-            'pending_confirm': {'target_state': 'Done', 'requested_at': '2026-04-26T00:00:00Z'},
-            'sourceMeta': {'sessionId': 'sess-1', 'updatedAt': 1714080000000},
+            'pending_confirm': {'target_state': 'Done', 'requested_at': recent_iso(3)},
+            'sourceMeta': {'sessionId': 'sess-1', 'updatedAt': recent_epoch_ms(3)},
         }
     ], ensure_ascii=False), encoding='utf-8')
     (data / 'tasks_source.json').write_text(json.dumps([
@@ -29,7 +40,7 @@ def test_main_extracts_and_merges_governance_samples(tmp_path, monkeypatch):
             'id': 'JJC-1',
             'state': 'Blocked',
             'autopsy': {'reason': 'provider_timeout'},
-            'updatedAt': '2026-04-26T01:00:00Z',
+            'updatedAt': recent_iso(2),
         }
     ], ensure_ascii=False), encoding='utf-8')
     (data / 'mission_control_tasks.json').write_text(json.dumps([
@@ -38,7 +49,7 @@ def test_main_extracts_and_merges_governance_samples(tmp_path, monkeypatch):
             'state': 'Review',
             'templateId': 'tpl-001',
             'templateParams': {'topic': '治理'},
-            'updatedAt': '2026-04-26T02:00:00Z',
+            'updatedAt': recent_iso(1),
         }
     ], ensure_ascii=False), encoding='utf-8')
     (data / 'manual_parallel_tasks.json').write_text(json.dumps([
@@ -47,7 +58,7 @@ def test_main_extracts_and_merges_governance_samples(tmp_path, monkeypatch):
             'state': 'PendingConfirm',
             'gate_checks': [{'result': 'pending'}],
             'notifications': {'pending_confirm_sent': True},
-            'updatedAt': '2026-04-26T03:00:00Z',
+            'updatedAt': recent_iso(),
         }
     ], ensure_ascii=False), encoding='utf-8')
 
@@ -131,10 +142,10 @@ def test_main_clears_stale_pending_confirm_when_source_resolved(tmp_path, monkey
         {
             'id': 'OC-resolved-1',
             'state': 'PendingConfirm',
-            'pending_confirm': {'target_state': 'Done', 'requested_at': '2026-04-26T00:00:00Z'},
+            'pending_confirm': {'target_state': 'Done', 'requested_at': recent_iso(3)},
             'gate_checks': [{'result': 'pending'}],
-            'sampleCapturedAt': '2026-04-26T00:00:00Z',
-            'sampleLastSeenAt': '2026-04-26T00:00:00Z',
+            'sampleCapturedAt': recent_iso(3),
+            'sampleLastSeenAt': recent_iso(3),
             'sampleSources': ['legacy_tasks_source'],
             'sourceLayer': 'governance_sample',
         }
@@ -148,7 +159,7 @@ def test_main_clears_stale_pending_confirm_when_source_resolved(tmp_path, monkey
                 {'result': 'pending'},
                 {'result': 'approved', 'to': 'Done'}
             ],
-            'updatedAt': '2026-04-26T01:00:00Z',
+            'updatedAt': recent_iso(2),
         }
     ], ensure_ascii=False), encoding='utf-8')
     (data / 'mission_control_tasks.json').write_text('[]', encoding='utf-8')

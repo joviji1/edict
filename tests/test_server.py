@@ -1,11 +1,19 @@
 """tests for dashboard/server.py route handling"""
+import datetime
 import json, pathlib, sys, threading, time
 from http.client import HTTPConnection
 
 # Add project paths
-ROOT = pathlib.Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / 'dashboard'))
-sys.path.insert(0, str(ROOT / 'scripts'))
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+DASHBOARD = ROOT / 'dashboard'
+SCRIPTS = ROOT / 'scripts'
+sys.path.insert(0, str(DASHBOARD))
+sys.path.insert(0, str(SCRIPTS))
+
+
+def recent_iso(hours_ago=0):
+    dt = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=hours_ago)
+    return dt.replace(microsecond=0).isoformat().replace('+00:00', 'Z')
 
 
 def test_healthz(tmp_path):
@@ -495,10 +503,10 @@ def test_save_tasks_syncs_governance_samples_after_write(tmp_path, monkeypatch):
         'state': 'PendingConfirm',
         'pending_confirm': {
             'target_state': 'Done',
-            'requested_at': '2026-04-26T00:00:00Z',
+            'requested_at': recent_iso(1),
         },
         'gate_checks': [{'result': 'pending'}],
-        'updatedAt': '2026-04-26T01:00:00Z',
+        'updatedAt': recent_iso(),
     }]
 
     srv.save_tasks(tasks)
