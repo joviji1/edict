@@ -156,7 +156,15 @@ def check_session(key: str, entry: dict, now_ms: int,
             })
 
     # 5. model error in last entry
-    if session_file and session_file.exists() and session_file.is_file() and session_file.stat().st_size > 0:
+    metadata = entry.get('metadata') if isinstance(entry.get('metadata'), dict) else {}
+    noise_cleared = metadata.get('noiseClearedBy')
+    if (
+        session_file
+        and session_file.exists()
+        and session_file.is_file()
+        and session_file.stat().st_size > 0
+        and not (status != 'running' and noise_cleared)
+    ):
         last_entries = get_last_entries(session_file, 1)
         if last_entries:
             last = last_entries[0]

@@ -1,8 +1,60 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-05-09 10:34",
+  "updated_at": "2026-05-11 09:23",
   "timezone": "Asia/Shanghai",
   "entries": [
+    {
+      "entry_id": "VERIF-20260511-0923-SESSION-NOISE-CLEAN",
+      "feature_id": "OPENCLAW-SESSION-OBSERVABILITY-001",
+      "category": "runtime_verification",
+      "status": "passed",
+      "summary": "OpenClaw session monitor 噪音已从 high=0/medium=4/low=5 清到 high=0/medium=0/low=0。",
+      "real_deliverable": "清理 stale/empty/aborted 历史 session 噪音，并补监控脚本对已清噪 done session 的识别，避免旧 transcript 尾部 prompt-error 继续冒充现行故障。",
+      "evidence": [
+        "备份：/root/.hermes/backups/openclaw-session-noise-clean-20260511-092210/",
+        "移出 5 个空 transcript 历史 session 索引；清理 3 个 done session 的 abortedLastRun 噪音并写入 metadata",
+        "python3 -m pytest -q tests/test_sidecar_scripts.py -> 4 passed in 0.03s",
+        "python3 scripts/monitor_openclaw_sessions.py --agents taizi zhongshu menxia shangshu --json -> high=0 medium=0 low=0 issues=[]"
+      ],
+      "notes": [
+        "未删除 transcript 文件；空 transcript 已备份后只从 sessions.json 索引移出",
+        "未改 edict 任务状态；只处理 OpenClaw session 观测噪音"
+      ],
+      "source_refs": [
+        "docs/current-progress-board.md",
+        "scripts/monitor_openclaw_sessions.py",
+        "tests/test_sidecar_scripts.py"
+      ],
+      "verified_at": "2026-05-11 09:23",
+      "timezone": "Asia/Shanghai"
+    },
+    {
+      "entry_id": "VERIF-20260511-0923-NATURAL-SAMPLE-FIELD-GAP",
+      "feature_id": "EDICT-GOVERNANCE-SAMPLE-001",
+      "category": "runtime_verification",
+      "status": "failed_with_action_required",
+      "summary": "低风险真实治理样本能完成状态机并进入三面一致，但 create API 会丢弃根级 templateId/targetDept/pending_confirm/notifications 字段。",
+      "real_deliverable": "拿到一条真实自然样本证据：任务 3738719d-640f-4d4f-a754-5a280590ddd7 已从 Taizi -> Zhongshu -> Menxia -> Assigned -> Doing -> Review -> PendingConfirm -> Done，三面均可见。",
+      "evidence": [
+        "备份：/root/.hermes/backups/edict-natural-sample-20260511-092023/",
+        "backend/tasks_source/live_status 均为 19 条，状态 Done=4 / Cancelled=15，taskSource=backend_api_export",
+        "样本 legacy_id=JJC-20260511-NATURAL-SAMPLE，三面各 1 条，状态 Done",
+        "样本根级 targetDept/templateId/templateParams/pending_confirm/notifications 在 backend、tasks_source、live 三面均为空或 null",
+        "代码复核：edict/backend/app/api/tasks.py 的 TaskCreate 只声明 title/description/priority/assignee_org/creator/tags/meta；根级治理字段不会被接收"
+      ],
+      "notes": [
+        "这证明状态机和 backend export 主链可用，但自然治理字段厚度仍未真正补齐",
+        "下一步需要扩展 TaskCreate/TaskOut/to_dict/export 字段映射，或明确治理字段全部收敛进 meta 并调整前端/聚合口径"
+      ],
+      "source_refs": [
+        "docs/current-progress-board.md",
+        "edict/backend/app/api/tasks.py",
+        "data/tasks_source.json",
+        "data/live_status.json"
+      ],
+      "verified_at": "2026-05-11 09:23",
+      "timezone": "Asia/Shanghai"
+    },
     {
       "entry_id": "VERIF-20260430-0545-ROLLBACK-DRILL",
       "feature_id": "EDICT-BACKEND-CUTOVER-001",
