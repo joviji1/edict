@@ -1,8 +1,37 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-05-12 07:44",
+  "updated_at": "2026-05-12 07:53",
   "timezone": "Asia/Shanghai",
   "entries": [
+    {
+      "entry_id": "VERIF-20260512-0753-DASHBOARD-OBSERVABILITY-LIVE-RESTART",
+      "feature_id": "EDICT-OBSERVABILITY-SAFE-UPDATE-001",
+      "category": "runtime_verification",
+      "status": "passed",
+      "summary": "重启 edict-dashboard.service 后，观星台完整聚合字段已进入 live 返回体，health/auth/sources 验证通过。",
+      "real_deliverable": "把提交 ee78005/当前 HEAD 的 dashboard 观星台增强切入 live 进程，并确认新字段在 /api/observability-panel 带 auth 请求中可见。",
+      "evidence": [
+        "backup=/root/.hermes/backups/edict-dashboard-restart-observability-live-20260512-075322，含 server.py/dist/service/sha256/service.before",
+        "systemctl restart edict-dashboard.service；service active/running；MainPID=40755；Active since 2026-05-12 07:53:22 CST",
+        "curl http://127.0.0.1:7892/healthz -> status ok，dataDir/tasksReadable/dataWritable=true",
+        "带 auth GET /api/observability-panel?limit=3&q=token -> HTTP 200 ok=true",
+        "live checks true: search_groups, logs_streams, cron_summary, tokens_by_agent, tokens_by_model, tokens_alerts, sources_consistent, token_redacted",
+        "sources: tasksSource/liveStatus/backendDb count 均为 20；byState Cancelled=15 Done=5；consistent=true",
+        "journal since 2 minutes ago only normal stop/start/JWT/scheduler startup, no traceback"
+      ],
+      "notes": [
+        "本轮只重启 dashboard，不重启 backend/loop，不写 DB，不改任务状态",
+        "q=token 当前 groups 全 0 是现场无匹配样本，不是字段缺失；字段存在性检查已全部通过"
+      ],
+      "source_refs": [
+        "docs/current-progress-board.md",
+        "docs/state/verification-ledger.json",
+        "dashboard/server.py",
+        "dashboard/dist/"
+      ],
+      "verified_at": "2026-05-12 07:53",
+      "timezone": "Asia/Shanghai"
+    },
     {
       "entry_id": "VERIF-20260512-0744-OBSERVABILITY-SAFE-UPDATE-CLOSEOUT",
       "feature_id": "EDICT-OBSERVABILITY-SAFE-UPDATE-001",
