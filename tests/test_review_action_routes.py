@@ -55,6 +55,33 @@ class ReviewActionRoutesTest(unittest.IsolatedAsyncioTestCase):
         app.include_router(self.legacy_api.router, prefix='/api/tasks')
         return TestClient(app)
 
+    async def test_create_task_route_preserves_root_governance_fields(self):
+        with self._make_client() as client:
+            resp = client.post('/api/tasks', json={
+                'title': 'route governance field preservation test',
+                'description': 'verify POST /api/tasks keeps root governance fields',
+                'assignee_org': '工部',
+                'creator': 'tester',
+                'tags': ['route-governance-field-preservation'],
+                'templateId': 'governance-sample-pending-confirm-v1',
+                'templateParams': {'purpose': 'route-field-preservation'},
+                'targetDept': '工部',
+                'pending_confirm': {'required': True, 'reason': 'root field should survive API create'},
+                'notifications': {'pending_confirm_sent': False},
+                'gate_checks': [{'gate': 'api-create-preserve', 'result': 'passed'}],
+                'meta': {'legacy_id': f'JJC-ROUTE-CREATE-{uuid.uuid4().hex[:8]}'},
+            })
+            self.assertEqual(resp.status_code, 201)
+            task_id = resp.json()['task_id']
+            detail = client.get(f'/api/tasks/{task_id}').json()
+
+        self.assertEqual(detail['templateId'], 'governance-sample-pending-confirm-v1')
+        self.assertEqual(detail['targetDept'], '工部')
+        self.assertEqual(detail['templateParams']['purpose'], 'route-field-preservation')
+        self.assertTrue(detail['pending_confirm']['required'])
+        self.assertFalse(detail['notifications']['pending_confirm_sent'])
+        self.assertEqual(detail['gate_checks'][-1]['gate'], 'api-create-preserve')
+
     async def test_task_review_action_route_approves_pending_confirm(self):
         _legacy_id, task_id = await self._create_task(state=self.TaskState.Review)
 

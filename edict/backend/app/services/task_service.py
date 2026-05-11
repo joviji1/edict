@@ -76,7 +76,16 @@ class TaskService:
         now = datetime.now(timezone.utc)
         trace_id = str(uuid.uuid4())
         target_org = Task.org_for_state(initial_state, assignee_org)
-        task_meta = meta or {}
+        task_meta = copy.deepcopy(meta or {})
+        template_id = str(task_meta.get("templateId") or task_meta.get("template_id") or "")
+        template_params = copy.deepcopy(task_meta.get("templateParams") or task_meta.get("template_params") or {})
+        target_dept = str(task_meta.get("targetDept") or task_meta.get("target_dept") or assignee_org or "")
+        if template_id:
+            task_meta["templateId"] = template_id
+        if template_params:
+            task_meta["templateParams"] = template_params
+        if target_dept:
+            task_meta["targetDept"] = target_dept
 
         task = Task(
             trace_id=trace_id,
@@ -90,7 +99,7 @@ class TaskService:
             org=target_org,
             official=creator,
             now=description or "任务创建",
-            target_dept=assignee_org or "",
+            target_dept=target_dept,
             flow_log=[
                 {
                     "from": None,
@@ -103,6 +112,8 @@ class TaskService:
             progress_log=[],
             todos=[],
             scheduler={},
+            template_id=template_id,
+            template_params=template_params,
             meta=task_meta,
         )
         self.db.add(task)

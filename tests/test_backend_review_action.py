@@ -43,6 +43,34 @@ class BackendReviewActionTest(unittest.IsolatedAsyncioTestCase):
             )
             return task.task_id
 
+    async def test_create_task_preserves_governance_fields_on_root_and_meta(self):
+        async with self.async_session() as session:
+            svc = self.TaskService(session)
+            task = await svc.create_task(
+                title='governance field preservation test',
+                description='verify create keeps template and pending-confirm fields',
+                assignee_org='工部',
+                creator='tester',
+                tags=['governance-field-preservation'],
+                meta={
+                    'legacy_id': f'JJC-CREATE-{uuid.uuid4().hex[:8]}',
+                    'templateId': 'governance-sample-pending-confirm-v1',
+                    'templateParams': {'purpose': 'field-preservation-verification'},
+                    'targetDept': '工部',
+                    'pending_confirm': {'required': True, 'reason': 'create path should preserve this'},
+                    'notifications': {'pending_confirm_sent': False},
+                    'gate_checks': [{'gate': 'create-preserve', 'result': 'passed'}],
+                },
+            )
+            data = task.to_dict()
+
+        self.assertEqual(data['templateId'], 'governance-sample-pending-confirm-v1')
+        self.assertEqual(data['targetDept'], '工部')
+        self.assertEqual(data['templateParams']['purpose'], 'field-preservation-verification')
+        self.assertTrue(data['pending_confirm']['required'])
+        self.assertFalse(data['notifications']['pending_confirm_sent'])
+        self.assertEqual(data['gate_checks'][-1]['gate'], 'create-preserve')
+
     async def test_transition_to_pending_confirm_persists_marker(self):
         task_id = await self._create_task(state=self.TaskState.Review)
 

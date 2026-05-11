@@ -28,6 +28,12 @@ class TaskCreate(BaseModel):
     creator: str = "emperor"
     tags: list[str] = []
     meta: dict | None = None
+    templateId: str = ""
+    templateParams: dict | None = None
+    targetDept: str = ""
+    pending_confirm: dict | None = None
+    notifications: dict | None = None
+    gate_checks: list[dict] | None = None
 
 
 class TaskTransition(BaseModel):
@@ -129,14 +135,28 @@ async def create_task(
     svc: TaskService = Depends(get_task_service),
 ):
     """创建新任务。"""
+    task_meta = dict(body.meta or {})
+    if body.templateId:
+        task_meta["templateId"] = body.templateId
+    if body.templateParams:
+        task_meta["templateParams"] = body.templateParams
+    if body.targetDept:
+        task_meta["targetDept"] = body.targetDept
+    if body.pending_confirm:
+        task_meta["pending_confirm"] = body.pending_confirm
+    if body.notifications:
+        task_meta["notifications"] = body.notifications
+    if body.gate_checks:
+        task_meta["gate_checks"] = body.gate_checks
+    assignee_org = body.assignee_org or body.targetDept or None
     task = await svc.create_task(
         title=body.title,
         description=body.description,
         priority=body.priority,
-        assignee_org=body.assignee_org,
+        assignee_org=assignee_org,
         creator=body.creator,
         tags=body.tags,
-        meta=body.meta,
+        meta=task_meta,
     )
     return {"task_id": str(task.task_id), "trace_id": str(task.trace_id), "state": task.state.value}
 

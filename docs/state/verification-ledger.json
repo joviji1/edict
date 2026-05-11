@@ -1,8 +1,38 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-05-11 09:23",
+  "updated_at": "2026-05-11 09:36",
   "timezone": "Asia/Shanghai",
   "entries": [
+    {
+      "entry_id": "VERIF-20260511-0936-GOVERNANCE-FIELD-CREATE-FIX",
+      "feature_id": "EDICT-GOVERNANCE-SAMPLE-001",
+      "category": "runtime_verification",
+      "status": "passed",
+      "summary": "POST /api/tasks 根级治理字段入口已补齐，真实字段保留样本在 backend/tasks_source/live_status 三面通过。",
+      "real_deliverable": "修复 TaskCreate/create_task 对 templateId/templateParams/targetDept/pending_confirm/notifications/gate_checks 的接入，重启 backend API 后用真实样本验证字段可保留并可随 backend export 进入三面。",
+      "evidence": [
+        "红灯测试：tests/test_review_action_routes.py::test_create_task_route_preserves_root_governance_fields 先失败，templateId 实际为空",
+        "代码修复：edict/backend/app/api/tasks.py 的 TaskCreate 接收根级治理字段并合并进 meta；TaskService.create_task 将 template_id/template_params/target_dept 写入模型列并同步 meta",
+        "回归测试：python3 -m pytest -q tests/test_review_action_routes.py tests/test_backend_review_action.py tests/test_export_backend_tasks_to_legacy_json.py tests/test_refresh_live_data_layers.py -> 18 passed",
+        "服务备份与重启：/root/.hermes/backups/edict-governance-field-create-fix-20260511-093545/；edict-backend-api.service 重启后 /health OK",
+        "真实样本：e1026bd3-5150-48aa-b418-2544ffc09984 / JJC-20260511-FIELD-PASS，从 Taizi 走到 Done",
+        "三面结果：backend/tasks_source/live_status 均 20 条，状态 Done=5 / Cancelled=15，taskSource=backend_api_export",
+        "字段结果：backend/tasks_source/live_status 均保留 templateId=governance-sample-pending-confirm-v1、templateParams.purpose=field-preservation-post-fix、targetDept=工部、notifications、gate_checks"
+      ],
+      "notes": [
+        "pending_confirm 创建后可见；任务走到 Done 后由状态机消费并清空，这是预期行为，不再按字段丢失处理",
+        "上一条 JJC-20260511-NATURAL-SAMPLE 仍保留为失败样本证据，证明本修复确实针对真实缺口"
+      ],
+      "source_refs": [
+        "edict/backend/app/api/tasks.py",
+        "edict/backend/app/services/task_service.py",
+        "tests/test_review_action_routes.py",
+        "tests/test_backend_review_action.py",
+        "docs/current-progress-board.md"
+      ],
+      "verified_at": "2026-05-11 09:36",
+      "timezone": "Asia/Shanghai"
+    },
     {
       "entry_id": "VERIF-20260511-0923-SESSION-NOISE-CLEAN",
       "feature_id": "OPENCLAW-SESSION-OBSERVABILITY-001",
